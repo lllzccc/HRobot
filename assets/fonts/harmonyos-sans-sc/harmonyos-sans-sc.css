@@ -1,0 +1,23 @@
+@font-face {
+  font-family: "HarmonyOS Sans SC Local";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("HarmonyOS_Sans_SC_Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "HarmonyOS Sans SC Local";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("HarmonyOS_Sans_SC_Medium.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "HarmonyOS Sans SC Local";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("HarmonyOS_Sans_SC_Bold.ttf") format("truetype");
+}

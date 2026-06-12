@@ -1,0 +1,83 @@
+# HROBOT Git ignore rules
+# 默认策略：上传源码与文档，不上传本地 HR 数据、密钥、缓存和打包产物。
+
+# Python / runtime caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments / local dependencies
+.venv/
+venv/
+env/
+ENV/
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Local editor / OS noise
+.cursor/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+tmp/
+temp/
+logs/
+
+# Build / package outputs
+build/
+dist/
+packages/
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+
+# Local server / process artifacts
+*.pid
+server-debug*.log
+
+# Brand-specific local assets and generated design notes
+# 公开仓库建议不要上传公司 VI、旧品牌素材或历史设计提示词。
+assets/brand/
+docs/brand-vi.md
+docs/superpowers/
+
+# HR data, uploaded files, generated reports, and local app state
+# 如需上传演示数据，请先单独放入已脱敏的 demo/sample 目录，再手动放行。
+data/*
+!data/.gitkeep
+!data/README.md
+!data/demo/
+!data/demo/**
+!data/samples/
+!data/samples/**
+
+# Optional: keep non-sensitive template directory only after manual review.
+# 如果确认模板不含真实员工/公司信息，可删除下面两行的注释并提交模板。
+# !data/templates/
+# !data/templates/**

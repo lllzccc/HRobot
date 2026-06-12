@@ -1,0 +1,901 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HR一站式AI工作台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="static/css/app.css">
+
+</head>
+<body>
+  <div class="shell" id="shell">
+    <button class="sidebar-toggle" id="sidebarToggle" title="隐藏导航栏" aria-label="隐藏导航栏">
+      <svg class="sidebar-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M15 18 9 12l6-6"></path>
+      </svg>
+      <span class="sidebar-toggle-label">收起</span>
+    </button>
+    <aside class="sidebar">
+      <div class="side-brand">
+        <img class="side-product-logo" src="assets/brand/hrobot-logo-dark.png" alt="HRobot">
+      </div>
+      <nav class="nav-list" aria-label="报告分页导航">
+        <button class="nav-item active" data-page="1"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V20h13v-9.5"/><path d="M9.5 20v-5h5v5"/></svg></span><span class="nav-text">首页</span></button>
+        <button class="nav-item" data-page="5"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3.5h7l3 3V20.5H7z"/><path d="M14 3.5v4h4"/><path d="M9.5 12h5"/><path d="M9.5 16h4"/></svg></span><span class="nav-text">报告生成</span></button>
+        <button class="nav-item" data-page="3"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 9.3h16"/><path d="M4 14.7h16"/><path d="M9.3 4v16"/><path d="M14.7 4v16"/></svg></span><span class="nav-text">人才盘点</span></button>
+        <button class="nav-item" data-page="8"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 2-.7 2-1.6 0-.5-.2-.9-.5-1.2-.3-.4-.5-.7-.5-1.2 0-1 1-1.8 2.1-1.8H16a4.5 4.5 0 0 0 0-9c-1.2-.7-2.5-1.2-4-1.2z"/><path d="M7.8 10h.1"/><path d="M10.3 7.5h.1"/><path d="M13.7 7.5h.1"/><path d="M16.2 10h.1"/></svg></span><span class="nav-text">设计中心</span></button>
+        <button class="nav-item" data-page="10"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5v4"/><path d="M12 16.5v4"/><path d="M4.6 8.2l3.5 2"/><path d="M15.9 13.8l3.5 2"/><path d="M19.4 8.2l-3.5 2"/><path d="M8.1 13.8l-3.5 2"/><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/></svg></span><span class="nav-text">Agent中心</span></button>
+        <button class="nav-item" data-page="7"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 0 1 15 0"/><path d="M7.5 12a4.5 4.5 0 0 1 9 0"/><path d="M11 13.5l4-5"/><path d="M12 14.5h.1"/><path d="M5 18h14"/></svg></span><span class="nav-text">情报中心</span></button>
+        <button class="nav-item" data-page="4"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5.5h14v10H8l-3 3z"/><path d="M9 9h6"/><path d="M9 12h4"/></svg></span><span class="nav-text">AI问答</span></button>
+        <button class="nav-item" data-page="9"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6z"/><path d="M19.2 13.3a7.8 7.8 0 0 0 0-2.6l2-1.5-2-3.4-2.4 1a8.3 8.3 0 0 0-2.2-1.3L14.3 3h-4.6l-.4 2.5a8.3 8.3 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.5a7.8 7.8 0 0 0 0 2.6l-2 1.5 2 3.4 2.4-1a8.3 8.3 0 0 0 2.2 1.3l.4 2.5h4.6l.4-2.5a8.3 8.3 0 0 0 2.2-1.3l2.4 1 2-3.4z"/></svg></span><span class="nav-text">设置</span></button>
+      </nav>
+      <div class="side-foot">Powered by HRobot</div>
+    </aside>
+
+    <main class="content">
+      <section class="report-page active cover-page" id="page-1">
+        <div class="cover-inner">
+          <div class="home-board">
+            <section class="home-identity-card" aria-label="HRBP 工作台">
+              <div class="home-copy">
+                <p class="home-eyebrow">HRobot</p>
+                <h1 class="cover-title">
+                  <span>HRBP</span>
+                  <span>一站式</span>
+                  <span>AI 工作台</span>
+                </h1>
+                <p class="cover-subtitle">校准、问答、报告和情报都在一个工作面里完成。</p>
+                <div class="home-actions" aria-label="快捷入口">
+                  <button class="primary home-action" type="button" data-home-page="3">进入人才盘点</button>
+                  <button class="home-action" type="button" data-home-page="5">生成报告</button>
+                </div>
+              </div>
+            </section>
+            <div class="home-workspace">
+              <section class="home-memo-card" aria-label="今日备忘">
+                <div class="home-memo-head">
+                  <span>今日备忘</span>
+                  <span class="home-memo-date" id="homeMemoDate">今天</span>
+                </div>
+                <div>
+                  <h2 class="home-memo-title" id="homeMemoTitle">先确认校准差异人员，再用 AI 问答收敛报告主线。</h2>
+                  <p class="home-memo-body" id="homeMemoBody">可以在 09 设置里维护备忘日期和记录；后续自动化方案也可以接入这里，作为首页提醒入口。</p>
+                </div>
+                <div class="home-memo-actions">
+                  <span id="homeMemoSource">来自首页默认提醒</span>
+                  <button type="button" data-home-page="9">配置备忘录</button>
+                </div>
+              </section>
+              <div class="home-module-grid">
+                <button class="home-module" type="button" data-home-page="5">
+                  <span>最近报告</span>
+                  <strong><span id="homeLatestReportTitle">还没有生成报告</span><br><span id="homeLatestReportMeta">导入 skill 和分析材料后，可以在这里继续查看最近产出。</span></strong>
+                </button>
+                <button class="home-module" type="button" data-home-page="5">
+                  <span>AI 使用累计</span>
+                  <strong>提问 <span class="command-number" id="homeAiQuestionCount">0</span> 次，报告 <span class="command-number" id="homeReportCount">0</span> 份，海报 <span class="command-number" id="homePosterCount">0</span> 张</strong>
+                </button>
+                <button class="home-module" type="button" data-home-page="4">
+                  <span>AI问答</span>
+                  <strong>围绕人员、部门和风险做即时查询</strong>
+                </button>
+                <button class="home-module" type="button" data-home-page="7">
+                  <span>情报中心</span>
+                  <strong>跟踪 AI × HR 与游戏组织信号</strong>
+                </button>
+                <button class="home-module" type="button" data-home-page="10">
+                  <span>Agent中心</span>
+                  <strong>收纳 vibe coding 后的独立 Web 功能</strong>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="report-page report-display-page" id="page-2">
+        <div class="report-display page-shell content-page">
+          <header class="import-head page-banner">
+            <div class="mark page-mark page-mark-report-list" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M6 3.8h8.2l3.8 3.8V20.2H6z"/>
+                <path d="M14 3.8v4h4"/>
+                <path d="M9 12h6"/>
+                <path d="M9 15.5h3.5"/>
+                <path d="M9 18.5h5"/>
+              </svg>
+            </div>
+            <div>
+              <h1>报告展示</h1>
+              <p>这里展示 05 报告生成产出的报告记录，点击卡片查看完整报告。</p>
+            </div>
+          </header>
+          <div class="report-library-toolbar">
+            <label class="report-search">
+              <span>搜索报告</span>
+              <input id="reportSearchInput" type="search" placeholder="输入标题、类型或材料来源">
+            </label>
+          </div>
+          <section class="report-library report-library-strip" id="reportLibrary">
+            <div class="empty-report">暂无生成报告。请先到 05 报告生成导入 skill 和分析材料后生成报告。</div>
+          </section>
+          <article class="generated-report report-detail" id="generatedReport" hidden>
+            <div class="report-detail-toolbar">
+              <button class="report-back" type="button" id="reportBackBtn">返回报告列表</button>
+              <div class="report-detail-actions">
+                <button class="report-format active" type="button" id="reportMdBtn">查看 MD</button>
+                <button class="report-format" type="button" id="reportHtmlBtn">生成 HTML</button>
+                <span class="report-format-status" id="reportFormatStatus"></span>
+                <button class="report-delete" type="button" id="reportDeleteBtn">删除当前报告</button>
+              </div>
+            </div>
+            <div id="generatedReportContent"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="report-page calibration-page" id="page-3">
+        <div class="app page-shell content-page">
+          <header class="import-head page-banner">
+            <div class="mark page-mark page-mark-data" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M4 4h16v16H4z"/>
+                <path d="M4 9.3h16"/>
+                <path d="M4 14.7h16"/>
+                <path d="M9.3 4v16"/>
+                <path d="M14.7 4v16"/>
+              </svg>
+            </div>
+            <div>
+              <h1>人才盘点</h1>
+              <p>集中查看人才分布、现场校准结果与盘点数据入口。</p>
+            </div>
+          </header>
+          <header class="topbar">
+            <div class="brand">
+              <div class="mark logo-mark"><img class="brand-logo" src="assets/brand/logo-cropped.png" alt="示例集团"></div>
+              <h1>人才盘点</h1>
+              <span class="badge">原始数据只读</span>
+            </div>
+            <div class="toolbar">
+              <button id="reloadBtn" disabled>前进一步</button>
+              <button id="resetSelectedBtn" disabled>后退一步</button>
+              <button class="danger" id="resetAllBtn">重置全部调整</button>
+              <button type="button" id="openTalentDataConfigBtn" data-home-page="6">配置数据</button>
+              <div class="export-control">
+                <select id="exportMode" aria-label="导出范围">
+                  <option value="all">导出全部</option>
+                  <option value="diff">导出差异</option>
+                </select>
+                <button id="exportBtn">导出校准后Excel</button>
+              </div>
+              <button class="primary" id="saveBtn">保存调整</button>
+            </div>
+          </header>
+
+          <section class="filters">
+            <div class="field filter-field" data-filter="group">
+              <label>群体</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="group"><span id="groupFilterLabel">全部</span></button>
+              <div class="filter-panel" id="groupFilterPanel"></div>
+            </div>
+            <div class="field filter-field department-field" data-filter="department">
+              <label>部门</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="department"><span id="departmentFilterLabel">全部</span></button>
+              <div class="filter-panel" id="departmentFilterPanel"></div>
+            </div>
+            <div class="field filter-field" data-filter="level">
+              <label>职级</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="level"><span id="levelFilterLabel">全部</span></button>
+              <div class="filter-panel" id="levelFilterPanel"></div>
+            </div>
+            <div class="field filter-field" data-filter="sequence">
+              <label>序列</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="sequence"><span id="sequenceFilterLabel">全部</span></button>
+              <div class="filter-panel" id="sequenceFilterPanel"></div>
+            </div>
+            <div class="field filter-field" data-filter="managerTeam">
+              <label>直线经理</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="managerTeam"><span id="managerTeamFilterLabel">全部</span></button>
+              <div class="filter-panel" id="managerTeamFilterPanel"></div>
+            </div>
+            <div class="field filter-field" data-filter="growthWarning">
+              <label>无成长预警</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="growthWarning"><span id="growthWarningFilterLabel">全部</span></button>
+              <div class="filter-panel" id="growthWarningFilterPanel"></div>
+            </div>
+            <div class="field filter-field" data-filter="aiAbility">
+              <label>AI能力</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="aiAbility"><span id="aiAbilityFilterLabel">全部</span></button>
+              <div class="filter-panel" id="aiAbilityFilterPanel"></div>
+            </div>
+            <div class="field filter-field" data-filter="talentPool">
+              <label>人才池</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="talentPool"><span id="talentPoolFilterLabel">全部</span></button>
+              <div class="filter-panel" id="talentPoolFilterPanel"></div>
+            </div>
+            <div class="field filter-field" data-filter="supervisorAdjusted">
+              <label>上级调整</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="supervisorAdjusted"><span id="supervisorAdjustedFilterLabel">全部</span></button>
+              <div class="filter-panel" id="supervisorAdjustedFilterPanel"></div>
+            </div>
+            <div class="field filter-field" data-filter="calibrationDiff">
+              <label>现场差异</label>
+              <button class="filter-trigger" type="button" data-filter-trigger="calibrationDiff"><span id="calibrationDiffFilterLabel">全部</span></button>
+              <div class="filter-panel" id="calibrationDiffFilterPanel"></div>
+            </div>
+            <button id="clearFilterBtn">清空筛选</button>
+          </section>
+
+          <div class="workspace profile-collapsed" id="workspace">
+            <main class="main">
+              <section class="stats" id="stats"></section>
+
+              <section class="matrix-area">
+                <div class="axis-title-y">绩效</div>
+                <div class="axis-y">
+                  <div>高</div>
+                  <div>中</div>
+                  <div>低</div>
+                </div>
+                <div class="matrix" id="matrix"></div>
+                <div></div>
+                <div class="axis-x">
+                  <div>低</div>
+                  <div>中</div>
+                  <div>高</div>
+                </div>
+                <div class="axis-title-x">潜能</div>
+              </section>
+
+              <section class="table-card">
+                <div class="table-head">
+                  <span>分布对照</span>
+                  <span id="statusLine" class="status-line"></span>
+                </div>
+                <table id="distributionTable"></table>
+              </section>
+            </main>
+
+            <aside class="side">
+              <div class="side-head">
+                <h2>人员档案与校准</h2>
+                <span class="badge">档案快照只读</span>
+              </div>
+              <div id="profile" class="profile"></div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="report-page query-page" id="page-4">
+        <div class="analysis-app workbench-page">
+          <header class="analysis-head page-banner">
+            <div class="analysis-title">
+              <div class="mark page-mark page-mark-chat" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M5 6.2h11.5a3 3 0 0 1 3 3v3.8a3 3 0 0 1-3 3H10l-4.8 3v-3A3 3 0 0 1 2.5 13V9.2a3 3 0 0 1 2.5-3z"/>
+                  <path d="M8 10h7"/>
+                  <path d="M8 13h4"/>
+                  <path d="M18.5 4.2l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5z"/>
+                </svg>
+              </div>
+              <div>
+                <h1>AI问答</h1>
+                <p>通过对话查询盘点结果、人才档案和现场校准数据。</p>
+              </div>
+            </div>
+          </header>
+
+          <div class="chat-workspace">
+            <section class="chat-log" id="aiChatLog" aria-live="polite">
+              <article class="chat-message assistant">
+                <div class="chat-role">HRobot AI问答助手</div>
+                <div class="chat-bubble">你可以问：某个员工的档案摘要是什么？某个部门高潜人才有哪些？哪些人校准后变化最大？无成长预警人员集中在哪些组织？</div>
+              </article>
+            </section>
+            <aside class="chat-history-panel" aria-label="历史问题">
+              <div class="chat-history-head">
+                <div>
+                  <h2>历史问题</h2>
+                  <p>点击后回填到输入框</p>
+                </div>
+                <button class="chat-history-clear" id="aiChatHistoryClear" type="button">清空</button>
+              </div>
+              <div class="chat-history-list" id="aiChatHistoryList">
+                <div class="chat-history-empty">暂无历史问题</div>
+              </div>
+            </aside>
+          </div>
+
+          <form class="chat-compose" id="aiChatForm">
+            <textarea id="aiChatInput" rows="3" placeholder="输入你想查询或分析的问题，例如：请列出美术中心 789 宫格人员，并说明他们的职级、序列和无成长预警情况。"></textarea>
+            <button class="primary" type="submit">发送</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="report-page analysis-page" id="page-5">
+        <div class="analysis-app workbench-page">
+          <header class="analysis-head page-banner">
+            <div class="analysis-title">
+              <div class="mark page-mark page-mark-report-build" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M6 3.8h8l4 4V20.2H6z"/>
+                  <path d="M14 3.8v4h4"/>
+                  <path d="M9 13.5h4.4"/>
+                  <path d="M9 17h3.2"/>
+                  <path d="M16.7 12.2l2.1 2.1"/>
+                  <path d="M15.1 16.4l4.9-4.9"/>
+                  <path d="M18.7 8.8l.4 1 .9.4-.9.4-.4.9-.4-.9-.9-.4.9-.4z"/>
+                </svg>
+              </div>
+              <div>
+                <h1>报告生成</h1>
+                <p>生成记录会直接沉淀为报告卡片；下方可继续导入 skill 框架与分析材料。</p>
+              </div>
+            </div>
+          </header>
+
+          <section class="report-builder">
+            <section class="report-shelf" aria-label="已生成报告">
+              <div class="card-title-row">
+                <h2>已生成报告</h2>
+                <label class="report-search">
+                  <span>搜索报告</span>
+                  <input id="reportSearchInputGenerate" type="search" placeholder="输入标题、类型或材料来源">
+                </label>
+              </div>
+              <div class="report-library report-library-strip" id="reportLibraryGenerate">
+                <div class="empty-report">暂无生成报告。选择预设并生成后会显示在这里。</div>
+              </div>
+            </section>
+            <form class="import-card report-generate-card" id="reportGenerateForm">
+              <h2>生成报告</h2>
+              <p>输入本次报告要求，再选择一个报告预设。系统会优先匹配已导入的对应 skill。</p>
+              <input id="reportTypeInput" type="hidden" value="talent-review">
+              <div class="report-prompt-shell">
+                <span class="report-prompt-plus">+</span>
+                <textarea id="reportInstructionInput" placeholder="有问题，尽管问。例如：重点分析高潜人才分布、关键组织风险、校准后变化和培养建议。"></textarea>
+                <button class="primary report-submit" type="submit">生成报告</button>
+              </div>
+              <div class="report-type-actions" aria-label="报告类型">
+                <button class="report-type-action" type="button" data-report-type="360" data-setting-file="360报告设定说明.md">
+                  <span>360报告</span>
+                </button>
+                <button class="report-type-action" type="button" data-report-type="org-diagnosis" data-setting-file="组织诊断报告设定说明.md">
+                  <span>组织诊断报告</span>
+                </button>
+                <button class="report-type-action active" type="button" data-report-type="talent-review" data-setting-file="人才盘点报告设定说明.md">
+                  <span>人才盘点报告</span>
+                </button>
+              </div>
+              <div class="status-line" id="reportPresetStatus">当前优先读取：人才盘点报告设定说明.md</div>
+              <div class="status-line" id="reportGenerateStatus"></div>
+            </form>
+            <div class="report-import-grid">
+              <form class="import-card" id="skillImportForm">
+                <h2>导入 skill 框架</h2>
+                <p>上传用于报告生成的分析框架、输出结构、判断口径或提示词文件，支持文本、Markdown、JSON 等材料。</p>
+                <input id="skillFileInput" type="file">
+                <button class="primary" type="submit">导入 skill</button>
+                <div class="status-line" id="skillImportStatus"></div>
+                <div class="card-title-row">
+                  <h2>已导入 skill</h2>
+                  <button type="button" id="refreshReportAssetsBtn">刷新</button>
+                </div>
+                <div id="reportSkillAssetList" class="asset-list compact-file-list"></div>
+              </form>
+              <form class="import-card" id="materialImportForm">
+                <h2>导入其他分析材料</h2>
+                <p>上传业务背景、组织说明、会议纪要、补充分析等材料。AI 会结合人才盘点结果与这些材料生成报告。</p>
+                <input id="materialFileInput" type="file">
+                <button class="primary" type="submit">导入材料</button>
+                <div class="status-line" id="materialImportStatus"></div>
+                <div class="card-title-row">
+                  <h2>已导入材料</h2>
+                  <button type="button" id="refreshReportAssetsInlineBtn">刷新</button>
+                </div>
+                <div id="reportMaterialAssetList" class="asset-list compact-file-list"></div>
+              </form>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="report-page import-page" id="page-6">
+        <div class="import-app page-shell content-page">
+          <header class="import-head page-banner">
+            <div class="mark page-mark page-mark-data" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M5 7c0-1.6 3.1-3 7-3s7 1.4 7 3-3.1 3-7 3-7-1.4-7-3z"/>
+                <path d="M5 7v5c0 1.6 3.1 3 7 3s7-1.4 7-3V7"/>
+                <path d="M5 12v5c0 1.6 3.1 3 7 3s7-1.4 7-3v-5"/>
+                <path d="M12 8.5V3.8"/>
+                <path d="M9.8 5.8 12 3.6l2.2 2.2"/>
+              </svg>
+            </div>
+            <div>
+              <h1>人才盘点数据配置</h1>
+              <p>这里维护人才盘点页使用的数据源与人才池配置；导入后的数据会写入后台固定目录。</p>
+            </div>
+            <div class="page-banner-actions">
+              <button type="button" id="backToTalentReviewBtn" data-home-page="3">返回人才盘点</button>
+              <button type="button" id="refreshImportSourcesBtn">刷新导入情况</button>
+            </div>
+          </header>
+
+          <div class="import-grid">
+            <form class="import-card" id="reviewImportForm">
+              <h2>导入人才盘点结果 Excel</h2>
+              <p>上传固定表头的 .xlsx 文件。后台会覆盖旧盘点文件，并自动解析成 JSON 供后续调用。</p>
+              <input id="reviewExcelInput" type="file" accept=".xlsx">
+              <button class="primary" type="submit">导入盘点结果</button>
+              <div class="status-line" id="reviewImportStatus"></div>
+              <div class="card-title-row">
+                <h2>已导入盘点结果</h2>
+                <button type="button" id="refreshImportSourcesInlineBtn">刷新</button>
+              </div>
+              <div id="reviewSourceList" class="asset-list compact-file-list"></div>
+            </form>
+
+            <form class="import-card" id="profileImportForm">
+              <h2>导入人才档案 JSON</h2>
+              <p>上传人才档案快照 JSON。不同部门文件会分表保留并合并读取；同名文件会替换旧版本。</p>
+              <input id="profileJsonInput" type="file" accept=".json,application/json">
+              <button class="primary" type="submit">导入人才档案</button>
+              <div class="status-line" id="profileImportStatus"></div>
+              <div class="card-title-row">
+                <h2>已导入人才档案</h2>
+                <button type="button" id="refreshImportSourcesProfilesBtn">刷新</button>
+              </div>
+              <div id="profileSourceList" class="asset-list compact-file-list"></div>
+              <div class="status-line" id="importSourceStatus"></div>
+            </form>
+
+            <form class="import-card" id="employeeRosterImportForm">
+              <h2>导入全部人员 Excel</h2>
+              <p>上传人员信息导出的 Excel，用于补充直线经理、序列、职务等字段；可一次选择多个 Excel 合并识别。</p>
+              <input id="employeeRosterExcelInput" type="file" accept=".xlsx" multiple>
+              <button class="primary" type="submit">导入员工关系</button>
+              <div class="status-line" id="employeeRosterImportStatus"></div>
+              <div class="card-title-row">
+                <h2>已导入员工关系</h2>
+                <button type="button" id="refreshImportSourcesRosterBtn">刷新</button>
+              </div>
+              <div id="employeeRosterSourceList" class="asset-list compact-file-list"></div>
+            </form>
+
+            <section class="import-card talent-pool-card">
+              <h2>人才池配置</h2>
+              <p class="pool-help">新建人才池，可直接从 Excel 复制粘贴，一人一行；也支持 张三;李四;王五。保存后可在 03 人才盘点页上方按人才池筛选。</p>
+              <div class="pool-builder">
+                <div class="field">
+                  <label for="talentPoolNameInput">人才池名称</label>
+                  <input id="talentPoolNameInput" placeholder="例如：核心策划">
+                </div>
+                <div class="field">
+                  <label for="talentPoolMembersInput">人员名单</label>
+                  <textarea id="talentPoolMembersInput" placeholder="可直接从 Excel 复制粘贴，一人一行；也支持 张三;李四;王五"></textarea>
+                </div>
+                <div class="pool-actions">
+                  <button class="primary" id="saveTalentPoolBtn" type="button">保存人才池</button>
+                  <button id="cancelTalentPoolEditBtn" type="button">取消编辑</button>
+                </div>
+              </div>
+              <div class="pool-list" id="talentPoolList"></div>
+              <div class="status-line" id="talentPoolStatus"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="report-page intelligence-page" id="page-7">
+        <div class="import-app page-shell content-page">
+          <header class="import-head page-banner">
+            <div class="mark page-mark page-mark-intelligence" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 20.2a8.2 8.2 0 1 0 0-16.4 8.2 8.2 0 0 0 0 16.4z"/>
+                <path d="M12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9z"/>
+                <path d="M12 12h7.9"/>
+                <path d="M12 12 8.5 6.2"/>
+                <path d="M12 12 8.8 17.2"/>
+              </svg>
+            </div>
+            <div>
+              <h1>情报中心</h1>
+              <p>追踪 AI × HR 与中国游戏公司组织人才变化，沉淀可行动的 HRBP 情报。</p>
+            </div>
+          </header>
+          <section class="module-card">
+            <div class="module-toolbar">
+              <input id="intelligenceSearch" class="query-input" placeholder="搜索标题、摘要、来源、关键词">
+              <input id="intelligenceDate" class="query-input date-input" type="date">
+              <button type="button" id="intelligenceHistoryBtn">历史查询</button>
+              <button type="button" id="intelligenceLatestBtn">查看最新</button>
+              <button class="primary" type="button" id="intelligenceUpdateBtn">手动更新</button>
+            </div>
+            <div class="module-toolbar secondary">
+              <div class="filter-tabs compact-tabs" id="intelligenceTabs">
+                <button type="button" class="active" data-channel="">全部</button>
+                <button type="button" data-channel="ai_hr">AI × HR</button>
+                <button type="button" data-channel="game_org">游戏组织</button>
+              </div>
+              <span class="status-line" id="intelligenceStatus">等待加载</span>
+            </div>
+          </section>
+          <section class="intelligence-grid">
+            <div class="import-card">
+              <div class="section-head">
+                <h2>AI × HR 动态与洞察</h2>
+                <span id="aiHrIntelligenceCount" class="badge">0 条</span>
+              </div>
+              <div class="news-list" id="aiHrIntelligenceList"></div>
+            </div>
+            <div class="import-card">
+              <div class="section-head">
+                <h2>中国游戏公司组织与人才变化</h2>
+                <span id="gameOrgIntelligenceCount" class="badge">0 条</span>
+              </div>
+              <div class="news-list" id="gameOrgIntelligenceList"></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="report-page design-page" id="page-8">
+        <div class="import-app page-shell content-page">
+          <header class="import-head page-banner">
+            <div class="mark page-mark page-mark-design" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3.8a8.2 8.2 0 0 0-8.2 8.2 7.7 7.7 0 0 0 7.7 7.7h1.2a1.8 1.8 0 0 0 1.3-3.1 1.8 1.8 0 0 1 1.2-3.1h1.1a3.9 3.9 0 0 0 3.9-3.9c0-3.2-3.5-5.8-8.2-5.8z"/>
+                <path d="M7.8 11h.1"/>
+                <path d="M9.8 7.8h.1"/>
+                <path d="M14.2 7.8h.1"/>
+                <path d="M16.2 11h.1"/>
+              </svg>
+            </div>
+            <div>
+              <h1>设计中心</h1>
+              <p>基于 HRobot 品牌风格生成海报素材，并保存到本地历史。</p>
+            </div>
+          </header>
+          <section class="design-workbench">
+            <form class="import-card poster-compose" id="designPosterForm">
+              <h2>创建海报</h2>
+              <p>填写海报类型、风格和需求描述，系统会调用 09 设置中的图像生成模型。</p>
+              <div class="settings-grid">
+                <div class="field">
+                  <label for="posterType">海报类型</label>
+                  <select id="posterType">
+                    <option value="referral">内推海报</option>
+                    <option value="training">培训海报</option>
+                    <option value="event">活动海报</option>
+                    <option value="festival">节日海报</option>
+                    <option value="notice">通知公告</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="posterStyle">风格偏好</label>
+                  <select id="posterStyle">
+                    <option value="modern">现代简约</option>
+                    <option value="game">游戏潮流</option>
+                    <option value="tech">科技感</option>
+                    <option value="warm">温暖人文</option>
+                    <option value="chinese">国风</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="posterSize">尺寸</label>
+                  <select id="posterSize">
+                    <option value="1024x1024">方图 1024×1024</option>
+                    <option value="1024x1536">竖版 1024×1536</option>
+                    <option value="1536x1024">横版 1536×1024</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field">
+                <label for="posterRequirement">需求描述</label>
+                <textarea id="posterRequirement" placeholder="例如：标题：孵化二部急招 TA 专家；副标题：和我们一起做有意思的游戏；画面年轻、有活力、突出游戏行业氛围。"></textarea>
+              </div>
+              <div class="form-actions">
+                <button class="primary" type="submit">生成海报</button>
+                <button type="button" id="goSettingsFromDesign">去 09 设置</button>
+                <span class="status-line" id="designGenerateStatus"></span>
+              </div>
+            </form>
+            <aside class="import-card">
+              <div class="section-head">
+                <h2>本地生成记录</h2>
+                <button type="button" id="refreshPosterHistoryBtn">刷新</button>
+              </div>
+              <div class="poster-history-grid" id="posterHistoryGrid"></div>
+            </aside>
+          </section>
+          <dialog class="poster-preview-dialog" id="posterPreviewDialog">
+            <div class="poster-preview-head">
+              <h2 id="posterPreviewTitle">海报预览</h2>
+              <button type="button" id="posterPreviewCloseBtn">关闭</button>
+            </div>
+            <div class="poster-preview-body">
+              <img id="posterPreviewImage" alt="海报预览">
+              <div class="poster-preview-actions">
+                <a id="posterPreviewOpenLink" target="_blank" rel="noopener">打开原图</a>
+              </div>
+            </div>
+          </dialog>
+        </div>
+      </section>
+
+      <section class="report-page agent-page" id="page-10">
+        <div class="import-app page-shell content-page">
+          <header class="import-head page-banner">
+            <div class="mark page-mark page-mark-agent" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3.8v3.4"/>
+                <path d="M12 16.8v3.4"/>
+                <path d="M4.8 8.2l3 1.8"/>
+                <path d="M16.2 14l3 1.8"/>
+                <path d="M19.2 8.2l-3 1.8"/>
+                <path d="M7.8 14l-3 1.8"/>
+                <path d="M12 7.8a4.2 4.2 0 1 0 0 8.4 4.2 4.2 0 0 0 0-8.4z"/>
+              </svg>
+            </div>
+            <div>
+              <h1>Agent中心</h1>
+              <p>收纳个人 vibe coding 后的独立 Web 功能，上传或投放 zip 后自动生成卡片。</p>
+            </div>
+          </header>
+          <section class="import-card agent-project-panel">
+            <div class="section-head">
+              <div class="page-banner-actions">
+                <span class="badge" id="agentProjectListCount">0 个</span>
+                <span class="status-line" id="agentProjectStatus"></span>
+              </div>
+            </div>
+            <div class="agent-project-grid" id="agentProjectGrid"></div>
+            <input id="agentProjectZipInput" class="visually-hidden-file" type="file" accept=".zip,application/zip" tabindex="-1" aria-hidden="true">
+          </section>
+        </div>
+      </section>
+
+      <section class="report-page settings-page" id="page-9">
+        <div class="import-app page-shell content-page">
+          <header class="import-head page-banner">
+            <div class="mark page-mark page-mark-settings" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M5 6.5h14"/>
+                <path d="M5 12h14"/>
+                <path d="M5 17.5h14"/>
+                <path d="M9 4.8v3.4"/>
+                <path d="M15.2 10.3v3.4"/>
+                <path d="M11.5 15.8v3.4"/>
+              </svg>
+            </div>
+            <div>
+              <h1>设置</h1>
+              <p>集中管理本地 AI 接入配置，保存后供 AI 问答、报告生成、情报增强和设计中心调用。</p>
+            </div>
+          </header>
+          <section class="settings-layout">
+            <details class="settings-section">
+              <summary>
+                <div class="settings-summary-title">
+                  <h2>模型配置</h2>
+                  <p>集中维护多模态大模型与图像生成模型。</p>
+                </div>
+                <span class="settings-summary-icon" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="settings-section-body settings-model-grid">
+                <form class="settings-subform" id="multimodalConfigForm">
+                  <h3>多模态大模型</h3>
+                  <p>用于 04 AI 问答、05 报告生成，以及情报摘要增强。</p>
+                  <div class="field">
+                    <label for="settingsMultimodalBaseUrl">API Base URL</label>
+                    <input id="settingsMultimodalBaseUrl" class="query-input" placeholder="https://api.openai.com/v1">
+                  </div>
+                  <div class="field">
+                    <label for="settingsMultimodalModel">模型</label>
+                    <input id="settingsMultimodalModel" class="query-input" placeholder="例如 gpt-4o">
+                  </div>
+                  <div class="field">
+                    <label for="settingsMultimodalApiKey">API Key</label>
+                    <input id="settingsMultimodalApiKey" class="query-input" type="password" placeholder="留空则不覆盖">
+                  </div>
+                  <div class="form-actions">
+                    <button class="primary" type="submit">保存本组</button>
+                    <span class="status-line" id="multimodalConfigStatus"></span>
+                  </div>
+                </form>
+                <form class="settings-subform" id="imageConfigForm">
+                  <h3>图像生成模型</h3>
+                  <p>用于 08 设计中心生成海报，并保存到本地历史。</p>
+                  <div class="field">
+                    <label for="settingsImageBaseUrl">Image API Base URL</label>
+                    <input id="settingsImageBaseUrl" class="query-input" placeholder="https://api.openai.com/v1">
+                  </div>
+                  <div class="field">
+                    <label for="settingsImageModel">图像模型</label>
+                    <input id="settingsImageModel" class="query-input" placeholder="例如 gpt-image-1">
+                  </div>
+                  <div class="field">
+                    <label for="settingsImageApiKey">Image API Key</label>
+                    <input id="settingsImageApiKey" class="query-input" type="password" placeholder="留空则不覆盖">
+                  </div>
+                  <div class="form-actions">
+                    <button class="primary" type="submit">保存本组</button>
+                    <button type="button" id="testImageConfigBtn">测试生图</button>
+                    <span class="status-line" id="imageConfigStatus"></span>
+                  </div>
+                </form>
+              </div>
+            </details>
+            <details class="settings-section">
+              <summary>
+                <div class="settings-summary-title">
+                  <h2>设计中心提示词配置</h2>
+                  <p>维护设计中心生成海报时使用的提示词与参考素材规则。</p>
+                </div>
+                <span class="settings-summary-icon" aria-hidden="true">⌄</span>
+              </summary>
+              <form class="settings-section-body memo-settings-card" id="designPromptConfigForm">
+              <div class="memo-settings-grid">
+                <div class="field">
+                  <label for="designPromptBaseInput">基础提示词（平时做什么）</label>
+                  <p class="field-help">适合写长期通用目标，比如招聘海报、节日海报、活动主视觉。</p>
+                  <textarea id="designPromptBaseInput" placeholder="例如：为招聘活动生成一张可直接使用的宣传海报。"></textarea>
+                </div>
+                <div class="field">
+                  <label for="designPromptBrandInput">品牌与画面约束</label>
+                  <p class="field-help">写品牌色、行业感、信息清晰度这类长期有效的画面要求。</p>
+                  <textarea id="designPromptBrandInput" placeholder="例如：使用品牌主色、信息清晰、适合游戏行业场景。"></textarea>
+                </div>
+                <div class="field">
+                  <label for="designPromptCustomInput">自定义固定限定（这次必须满足）</label>
+                  <p class="field-help">适合写硬性要求，比如必须带 logo、必须参考模板、必须借鉴吉祥物。</p>
+                  <textarea id="designPromptCustomInput" placeholder="例如：必须预留公司 logo 区域；必须参考校园招聘模板；需要出现吉祥物。"></textarea>
+                </div>
+                <div class="field">
+                  <label for="designPromptReferenceInput">参考素材说明（怎么用目录里的图）</label>
+                  <p class="field-help">写给模型看的使用规则，比如优先参考 logo、模板版式或吉祥物造型。</p>
+                  <textarea id="designPromptReferenceInput" placeholder="例如：如果 references 目录里有 logo、吉祥物、模板，请优先参考其风格和版式。"></textarea>
+                </div>
+                <div class="field">
+                  <label for="designPromptTemplateInput">Prompt 模板</label>
+                  <p class="field-help">一般不用改；只有想重排整段 prompt 结构时再改。</p>
+                  <textarea id="designPromptTemplateInput" placeholder="{basePrompt} ... {requirement}"></textarea>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="primary" type="submit">保存设计配置</button>
+                <button type="button" id="refreshDesignPromptConfigBtn">刷新参考素材</button>
+                <span class="status-line" id="designPromptConfigStatus"></span>
+              </div>
+              <div class="memo-record-list">
+                <div class="memo-record-item">
+                  <span class="memo-record-date">配置文件</span>
+                  <span class="memo-record-text" id="designPromptConfigPath">data/design_center/poster_prompt_config.json</span>
+                </div>
+                <div class="memo-record-item">
+                  <span class="memo-record-date">参考素材目录</span>
+                  <span class="memo-record-text" id="designReferenceFolder">data/design_center/references</span>
+                </div>
+              </div>
+              <div class="memo-record-list" id="designReferenceFileList"></div>
+              </form>
+            </details>
+            <details class="settings-section">
+              <summary>
+                <div class="settings-summary-title">
+                  <h2>首页备忘录</h2>
+                  <p>维护首页“今日备忘”内容。</p>
+                </div>
+                <span class="settings-summary-icon" aria-hidden="true">⌄</span>
+              </summary>
+              <form class="settings-section-body memo-settings-card" id="homeMemoForm">
+              <div class="memo-settings-grid">
+                <div class="field">
+                  <label for="homeMemoDateInput">备忘日期</label>
+                  <input id="homeMemoDateInput" class="query-input" type="date">
+                </div>
+                <div class="field">
+                  <label for="homeMemoTextInput">备忘记录</label>
+                  <textarea id="homeMemoTextInput" placeholder="例如：先确认校准差异人员，再用 AI 问答收敛报告主线。"></textarea>
+                </div>
+                <div class="form-actions">
+                  <button class="primary" type="submit">保存备忘</button>
+                  <span class="status-line" id="homeMemoStatus"></span>
+                </div>
+              </div>
+              <div class="memo-record-list" id="homeMemoRecordList"></div>
+              </form>
+            </details>
+            <details class="settings-section">
+              <summary>
+                <div class="settings-summary-title">
+                  <h2>情报中心配置</h2>
+                  <p>设置自动更新、检索来源和摘要增强参数。</p>
+                </div>
+                <span class="settings-summary-icon" aria-hidden="true">⌄</span>
+              </summary>
+              <form class="settings-section-body intelligence-settings-card" id="intelligenceConfigForm">
+              <div class="settings-grid">
+                <div class="field">
+                  <label for="intelligenceAutoEnabled">自动更新</label>
+                  <select id="intelligenceAutoEnabled">
+                    <option value="true">开启</option>
+                    <option value="false">关闭</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="intelligenceRunAt">每日时间</label>
+                  <input id="intelligenceRunAt" class="query-input" type="time" value="10:00">
+                </div>
+                <div class="field">
+                  <label for="intelligenceChannelConfig">更新渠道</label>
+                  <select id="intelligenceChannelConfig">
+                    <option value="all">全部</option>
+                    <option value="ai_hr">AI × HR</option>
+                    <option value="game_org">游戏组织</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="intelligenceSourceConfig">检索来源</label>
+                  <select id="intelligenceSourceConfig">
+                    <option value="all">Bing + 微信</option>
+                    <option value="bing">仅 Bing 新闻</option>
+                    <option value="wechat">仅微信公众号</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="intelligenceMaxPerQuery">每词条数</label>
+                  <input id="intelligenceMaxPerQuery" class="query-input" type="number" min="1" max="10" value="3">
+                </div>
+                <div class="field">
+                  <label for="intelligenceWechatLimit">微信全文数</label>
+                  <input id="intelligenceWechatLimit" class="query-input" type="number" min="0" max="5" value="1">
+                </div>
+              </div>
+              <label class="checkbox-field">
+                <input id="intelligenceAllowUnverifiedWechat" type="checkbox">
+                <span>保留未核验微信线索</span>
+              </label>
+              <div class="form-actions">
+                <button type="submit">保存情报配置</button>
+                <span class="status-line" id="intelligenceConfigStatus"></span>
+              </div>
+              </form>
+            </details>
+            <section class="settings-section server-status-card" aria-label="服务器状态">
+              <div class="server-status-main">
+                <div class="settings-summary-title">
+                  <h2>服务器状态</h2>
+                  <p>查看本地服务连接状态，必要时可一键重启当前服务器。</p>
+                </div>
+                <div class="server-status-actions">
+                  <span class="server-status-pill is-checking" id="serverStatusPill">检测中</span>
+                  <button type="button" id="refreshServerStatusBtn">刷新状态</button>
+                  <button class="primary" type="button" id="restartServerBtn">重启服务器</button>
+                </div>
+              </div>
+              <div class="server-status-grid">
+                <div><span>连接状态</span><strong id="serverStatusText">检测中</strong></div>
+                <div><span>运行端口</span><strong id="serverStatusPort">-</strong></div>
+                <div><span>进程 ID</span><strong id="serverStatusPid">-</strong></div>
+                <div><span>启动时间</span><strong id="serverStatusStartedAt">-</strong></div>
+              </div>
+              <div class="status-line" id="serverStatusMessage">正在检查服务器连接。</div>
+            </section>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="static/modules/talent-review/talent-review.js"></script>
+  <script src="static/js/app.js"></script>
+
+</body>
+</html>
+
