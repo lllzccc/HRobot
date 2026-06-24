@@ -64,6 +64,129 @@
       return [...new Set(String(value || "").split(/[;；,\n\r\t]+/).map(name => name.trim()).filter(Boolean))];
     }
 
+    let reportCalibrationAnchor = null;
+
+    function reportToolDistribution(items = people) {
+      const total = items.length || 0;
+      const byGrid = new Map(gridDefs.map(grid => [grid.id, {
+        grid,
+        count: items.filter(person => Number(person.gridCurrent) === grid.id).length
+      }]));
+      return { total, byGrid };
+    }
+
+    function reportToolRatio(count, total) {
+      return total ? Math.round(count / total * 100) : 0;
+    }
+
+    function reportToolCountOf(ids) {
+      const { byGrid } = reportToolDistribution();
+      return ids.reduce((sum, id) => sum + (byGrid.get(id)?.count || 0), 0);
+    }
+
+    function renderReportTool() {
+      if (!$("page-11")) return;
+      const { total, byGrid } = reportToolDistribution();
+      const high = reportToolCountOf([7, 8, 9]);
+      const core = reportToolCountOf([4, 5, 6]);
+      const risk = reportToolCountOf([1, 2, 3]);
+      document.querySelectorAll("[data-ppt-metric='total']").forEach(item => item.textContent = total);
+      document.querySelectorAll("[data-ppt-metric='high']").forEach(item => item.textContent = `${high}人 / ${reportToolRatio(high, total)}%`);
+      document.querySelectorAll("[data-ppt-metric='core']").forEach(item => item.textContent = `${core}人 / ${reportToolRatio(core, total)}%`);
+      document.querySelectorAll("[data-ppt-metric='risk']").forEach(item => item.textContent = `${risk}人 / ${reportToolRatio(risk, total)}%`);
+      document.querySelectorAll("[data-ppt-metric='changes']").forEach(item => item.textContent = currentChanges().length);
+      const leader = [...byGrid.values()].sort((a, b) => b.count - a.count)[0];
+      document.querySelectorAll("[data-ppt-metric='leader']").forEach(item => item.textContent = leader ? `${leader.grid.id} ${leader.grid.name}` : "-");
+    }
+
+    function setReportPptSlide(slideId) {
+      const id = slideId || "overview";
+      document.querySelectorAll("[data-report-slide]").forEach(button => {
+        button.classList.toggle("active", button.dataset.reportSlide === id);
+      });
+      document.querySelectorAll("[data-report-slide-panel]").forEach(panel => {
+        panel.classList.toggle("active", panel.dataset.reportSlidePanel === id);
+      });
+    }
+
+    function renderReportDrawerTalentPoolFilter() {
+      const select = $("reportDrawerTalentPoolSelect");
+      if (!select) return;
+      const current = filters.talentPool.size === 1 ? [...filters.talentPool][0] : "";
+      const options = unique(talentPools.map(pool => pool.name)).sort();
+      select.innerHTML = [
+        `<option value="">全部人才池</option>`,
+        ...options.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+      ].join("");
+      select.value = options.includes(current) ? current : "";
+    }
+
+    function setReportDrawerTalentPoolFilter(poolName = "") {
+      filters.talentPool.clear();
+      if (poolName) filters.talentPool.add(poolName);
+      updateFilterLabels();
+      render();
+      renderReportTool();
+    }
+
+    function ensureReportCalibrationAnchor() {
+      const workspace = $("workspace");
+      if (!workspace || reportCalibrationAnchor) return;
+      reportCalibrationAnchor = document.createComment("talent-review-workspace-anchor");
+      workspace.parentNode.insertBefore(reportCalibrationAnchor, workspace);
+    }
+
+    function openReportCalibrationDrawer() {
+      ensureReportCalibrationAnchor();
+      const drawer = $("reportCalibrationDrawer");
+      const mount = $("reportCalibrationMount");
+      const backdrop = $("reportCalibrationBackdrop");
+      const workspace = $("workspace");
+      if (!drawer || !mount || !workspace) return;
+      mount.appendChild(workspace);
+      workspace.classList.add("report-drawer-workspace");
+      drawer.classList.add("open");
+      drawer.setAttribute("aria-hidden", "false");
+      if (backdrop) {
+        backdrop.hidden = false;
+        backdrop.classList.add("open");
+      }
+      renderReportDrawerTalentPoolFilter();
+      render();
+    }
+
+    function closeReportCalibrationDrawer() {
+      const drawer = $("reportCalibrationDrawer");
+      const backdrop = $("reportCalibrationBackdrop");
+      const workspace = $("workspace");
+      if (workspace && reportCalibrationAnchor?.parentNode) {
+        workspace.classList.remove("report-drawer-workspace");
+        reportCalibrationAnchor.parentNode.insertBefore(workspace, reportCalibrationAnchor.nextSibling);
+      }
+      if (drawer) {
+        drawer.classList.remove("open");
+        drawer.setAttribute("aria-hidden", "true");
+      }
+      if (backdrop) {
+        backdrop.classList.remove("open");
+        backdrop.hidden = true;
+      }
+      render();
+    }
+
+    async function saveReportDrawerCalibration() {
+      await saveOverrides();
+      renderReportTool();
+    }
+
+    window.renderReportTool = renderReportTool;
+    window.setReportPptSlide = setReportPptSlide;
+    window.setReportDrawerTalentPoolFilter = setReportDrawerTalentPoolFilter;
+    window.renderReportDrawerTalentPoolFilter = renderReportDrawerTalentPoolFilter;
+    window.openReportCalibrationDrawer = openReportCalibrationDrawer;
+    window.closeReportCalibrationDrawer = closeReportCalibrationDrawer;
+    window.saveReportDrawerCalibration = saveReportDrawerCalibration;
+
     function personTalentPools(person) {
       const name = reviewValue(person, "name", "");
       return talentPools.filter(pool => (pool.members || []).includes(name)).map(pool => pool.name);
@@ -324,6 +447,7 @@
       const payload = await response.json();
       talentPools = payload.pools || [];
       renderTalentPoolList();
+      renderReportDrawerTalentPoolFilter();
     }
 
     function renderTalentPoolList() {
@@ -400,6 +524,7 @@
       talentPools = payload.pools || [];
       renderTalentPoolList();
       fillMultiFilter("talentPool", unique(talentPools.map(pool => pool.name)).sort());
+      renderReportDrawerTalentPoolFilter();
       bindFilterPanels();
       updateFilterLabels();
       render();
@@ -1007,6 +1132,7 @@
       renderProfile();
       updateStatus();
       updateCalibrationStepButtons();
+      renderReportTool();
     }
 
     async function saveOverrides() {

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import base64
@@ -10,19 +10,20 @@ import os
 import subprocess
 import re
 import shutil
-import socket
 import sys
+import tempfile
 import threading
 import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
+from app.modules.agent_center import AgentCenterStoreMixin
 from app.modules.talent_review import TalentReviewStoreMixin
 
 if getattr(sys, "frozen", False):
@@ -40,12 +41,80 @@ def app_root():
 
 ROOT = app_root()
 DATA_DIR = ROOT / "data"
+DEBUG_LOG_PATH = ROOT / "debug-5fda48.log"
+
+
+def talent_snapshot_root(data_dir: Path):
+    configured = str(os.environ.get("HROBOT_TALENT_SNAPSHOT_ROOT") or "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    external = Path(data_dir).resolve().parent.parent / "HRobot talent snapshots"
+    return external if external.exists() else None
+
+
+def _agent_debug_log(location, message, data=None, hypothesis_id=""):
+    # #region agent log
+    try:
+        entry = {
+            "sessionId": "5fda48",
+            "location": location,
+            "message": message,
+            "data": data or {},
+            "hypothesisId": hypothesis_id,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 LOCAL_TZ = timezone(timedelta(hours=8))
 INTELLIGENCE_UPDATE_LOCK = threading.Lock()
 SERVER_STARTED_AT = datetime.now(LOCAL_TZ)
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8767
 SERVER_ALLOW_REMOTE_CLIENTS = False
+DEFAULT_APP_VERSION = "0.1.0"
+APP_VERSION_PATH = ROOT / "app_version.json"
+
+
+def app_version_payload():
+    saved = {}
+    if APP_VERSION_PATH.exists():
+        try:
+            saved = json.loads(APP_VERSION_PATH.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    app_name = str(saved.get("name") or "Hrobot")
+    default_install_dir = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / app_name
+    return {
+        "name": app_name,
+        "version": str(saved.get("version") or DEFAULT_APP_VERSION),
+        "installDir": str(default_install_dir),
+    }
+
+
+def _version_parts(value):
+    text = str(value or "").strip().lstrip("vV")
+    parts = []
+    for item in re.split(r"[.\-+_]", text):
+        if item.isdigit():
+            parts.append(int(item))
+        elif item:
+            match = re.match(r"^(\d+)", item)
+            parts.append(int(match.group(1)) if match else 0)
+    return tuple(parts or [0])
+
+
+def is_newer_version(candidate, current):
+    left = list(_version_parts(candidate))
+    right = list(_version_parts(current))
+    length = max(len(left), len(right))
+    left.extend([0] * (length - len(left)))
+    right.extend([0] * (length - len(right)))
+    return tuple(left) > tuple(right)
 
 REPORT_PRESETS = {
     "360": {
@@ -116,12 +185,6 @@ DEFAULT_DESIGN_PROMPT_CONFIG = {
     ),
 }
 
-DEFAULT_AGENT_PROJECT_CENTER = {
-    "updatedAt": "",
-    "projects": [],
-}
-
-
 def server_status_payload():
     now = datetime.now(LOCAL_TZ)
     return {
@@ -144,12 +207,22 @@ def schedule_server_restart(delay_seconds=0.8):
     command.extend(["--host", SERVER_HOST, "--port", str(SERVER_PORT)])
     if SERVER_ALLOW_REMOTE_CLIENTS:
         command.append("--allow-remote-clients")
+    probe_host = "127.0.0.1" if SERVER_HOST in {"0.0.0.0", "::", ""} else SERVER_HOST
 
     launcher_script = (
-        "import os, subprocess, time\n"
+        "import os, socket, subprocess, time\n"
         f"time.sleep({float(delay_seconds)!r})\n"
         f"command = {command!r}\n"
         f"cwd = {str(ROOT)!r}\n"
+        f"host = {probe_host!r}\n"
+        f"port = {int(SERVER_PORT)!r}\n"
+        "deadline = time.time() + 20\n"
+        "while time.time() < deadline:\n"
+        "    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:\n"
+        "        sock.settimeout(0.25)\n"
+        "        if sock.connect_ex((host, port)) != 0:\n"
+        "            break\n"
+        "    time.sleep(0.25)\n"
         "kwargs = {'cwd': cwd, 'stdin': subprocess.DEVNULL, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}\n"
         "if os.name == 'nt':\n"
         "    kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW\n"
@@ -167,14 +240,27 @@ def schedule_server_restart(delay_seconds=0.8):
     threading.Timer(0.2, lambda: os._exit(0)).start()
 
 
-class DataStore(TalentReviewStoreMixin):
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
+class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
     def __init__(self, data_dir: Path):
         self.data_dir = Path(data_dir)
+        self.talent_snapshot_root = talent_snapshot_root(self.data_dir)
         self.review_source_dir = self.data_dir / "review_results"
         self.profile_source_dir = self.data_dir / "talent_profiles"
         self.profile_snapshot_dir = self.data_dir / "talent_profile_snapshots"
-        self.hrbp_profile_split_dir = self.data_dir / "hrbp_profile_splits"
-        self.permission_dir = self.data_dir / "permissions"
+        self.hrbp_profile_split_dir = (
+            self.talent_snapshot_root / "hrbp_profile_splits"
+            if self.talent_snapshot_root
+            else self.data_dir / "hrbp_profile_splits"
+        )
+        self.permission_dir = (
+            self.talent_snapshot_root / "permissions"
+            if self.talent_snapshot_root
+            else self.data_dir / "permissions"
+        )
         self.report_dir = self.data_dir / "report_generation"
         self.legacy_review_source_dirs = [
             self.data_dir / "盘点结果",
@@ -191,6 +277,9 @@ class DataStore(TalentReviewStoreMixin):
         self.overrides_path = self.data_dir / "calibration_overrides.json"
         self.employee_map_path = self.data_dir / "employee_manager_map.json"
         self.ai_config_path = self.data_dir / "ai_config.json"
+        self.ai_secrets_path = self.data_dir / "local_ai_secrets.json"
+        self.mcp_config_path = self.data_dir / "mcp_config.json"
+        self.update_config_path = self.data_dir / "update_config.json"
         self.talent_pool_path = self.data_dir / "talent_pools.json"
         self.intelligence_path = self.data_dir / "intelligence.json"
         self.intelligence_history_path = self.data_dir / "intelligence_history.json"
@@ -273,7 +362,24 @@ class DataStore(TalentReviewStoreMixin):
     def _read_json(self, path: Path, fallback):
         if not path.exists():
             return fallback
-        return json.loads(path.read_text(encoding="utf-8-sig"))
+        try:
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except UnicodeDecodeError as error:
+            _agent_debug_log(
+                "server.py:_read_json",
+                "UnicodeDecodeError reading JSON file",
+                {"path": str(path), "error": str(error)},
+                "H1",
+            )
+            raise
+        except json.JSONDecodeError as error:
+            _agent_debug_log(
+                "server.py:_read_json",
+                "JSONDecodeError parsing file",
+                {"path": str(path), "error": str(error)},
+                "H1",
+            )
+            raise
 
     def _latest_json_in(self, folder: Path):
         if not folder.exists():
@@ -502,9 +608,56 @@ class DataStore(TalentReviewStoreMixin):
             raise ValueError(f"360 PDF 材料未解析出可读取正文：{path.name}。请上传可解析 PDF 或先转换为文本/Markdown。")
         return content[:limit]
 
+    def _extract_360_pdf_summary(self, filename: str, content: str):
+        text = str(content or "")
+        is_core_report = "核心版" in filename
+        summary = []
+        rank_match = re.search(r"排名[：:\s]*([0-9]+\s*/\s*[0-9]+)", text)
+        score_pattern = r"([0-5]\.\d{1,2})"
+        total_match = re.search(rf"(?:他评[：:\s]*|总分为[：:\s]*){score_pattern}", text)
+        self_match = re.search(rf"自评[：:\s]*{score_pattern}", text) if is_core_report else None
+        role_pairs = []
+        if is_core_report:
+            for label in ("上级", "同事", "下级"):
+                match = re.search(rf"{re.escape(label)}[：:\s]*{score_pattern}", text)
+                if match:
+                    role_pairs.append(f"{label}：{match.group(1)}")
+        if rank_match:
+            summary.append(f"- 排名：{rank_match.group(1)}")
+        if total_match:
+            summary.append(f"- 他评：{total_match.group(1)}")
+        if self_match:
+            summary.append(f"- 自评：{self_match.group(1)}")
+        if role_pairs:
+            summary.append(f"- 角色评分：{'；'.join(role_pairs)}")
+
+        capability_patterns = (
+            ("高分能力", r"他评分较高的能力[：:]\s*([^；。\n]+)"),
+            ("待发展能力", r"他评分较低的能力[：:]\s*([^；。\n]+)"),
+            ("差异较大能力", r"各角色分差异较大的能力[：:]\s*([^；。\n]+)"),
+        )
+        for label, pattern in capability_patterns:
+            match = re.search(pattern, text)
+            if match:
+                summary.append(f"- {label}：{self._clean_metric_value(match.group(1), limit=80)}")
+
+        if "开放性反馈" in text or "文本反馈" in text:
+            summary.append("- 含开放性反馈/文本反馈原文")
+
+        kind = "核心版" if "核心版" in filename else "标准版" if "标准版" in filename else "PDF"
+        header = f"### 360材料结构化摘要 - {Path(filename).name}（{kind}）"
+        if not summary:
+            summary.append("- 暂未从正文稳定提取到结构化指标，请结合下方原始解析正文阅读。")
+        return f"{header}\n" + "\n".join(summary)
+
+    def _read_360_pdf_context(self, path: Path, limit=60000):
+        content = self._read_pdf_text_file(path, limit=limit)
+        summary = self._extract_360_pdf_summary(path.name, content)
+        return f"{summary}\n\n### 原始解析正文 - {path.name}\n{content}"[:limit]
+
     def _read_report_asset_text(self, path: Path, preset_id=None, label=None):
         if preset_id == "360" and label == "其他分析材料" and path.suffix.lower() == ".pdf":
-            return self._read_pdf_text_file(path)
+            return self._read_360_pdf_context(path)
         return self._read_text_file(path)
 
     def import_report_asset(self, kind: str, filename: str, content: bytes):
@@ -594,7 +747,7 @@ class DataStore(TalentReviewStoreMixin):
             "employeeRoster": list_files(self.data_dir, ["employee_manager_map.json"]),
         }
 
-    def report_asset_context(self, preset_id=None):
+    def report_asset_context(self, preset_id=None, target_name="", selected_skills=None, selected_materials=None):
         sections = []
         preset = REPORT_PRESETS.get(preset_id or "")
         if preset:
@@ -616,15 +769,32 @@ class DataStore(TalentReviewStoreMixin):
                 "content": preset["prompt"],
             })
         asset_groups = [
-            ("skill框架与分析逻辑", [self.report_skill_dir, *[folder / "skills" for folder in self.legacy_report_dirs]], True),
-            ("其他分析材料", [self.report_material_dir, *[folder / "materials" for folder in self.legacy_report_dirs]], False),
+            ("skill框架与分析逻辑", [self.report_skill_dir, *[folder / "skills" for folder in self.legacy_report_dirs]], True, selected_skills),
+            ("其他分析材料", [self.report_material_dir, *[folder / "materials" for folder in self.legacy_report_dirs]], False, selected_materials),
         ]
-        for label, folders, is_skill_group in asset_groups:
+        for label, folders, is_skill_group, selected_names in asset_groups:
             paths = []
             for folder in folders:
                 if folder.exists():
                     paths.extend(path for path in folder.iterdir() if path.is_file())
-            if preset and is_skill_group:
+            if selected_names is not None:
+                requested_names = list(dict.fromkeys(str(name or "").strip() for name in selected_names if str(name or "").strip()))
+                if any(Path(name).name != name for name in requested_names):
+                    raise ValueError("所选报告资料文件名不合法。")
+                available_paths = {}
+                for path in paths:
+                    available_paths.setdefault(path.name, path)
+                missing_names = [name for name in requested_names if name not in available_paths]
+                if missing_names:
+                    raise FileNotFoundError(f"未找到所选报告资料：{'、'.join(missing_names)}")
+                paths = [available_paths[name] for name in requested_names]
+            elif preset_id == "360" and label == "其他分析材料" and target_name:
+                matched_paths = [path for path in paths if target_name in path.name]
+                if matched_paths:
+                    paths = matched_paths
+            if selected_names is not None:
+                pass
+            elif preset and is_skill_group:
                 keywords = [keyword.lower() for keyword in preset.get("keywords", [])]
 
                 def priority(path):
@@ -684,14 +854,16 @@ class DataStore(TalentReviewStoreMixin):
         text = f"{self._plain_report_text(content)}\n{instruction or ''}"
         text = re.sub(r"\s+", " ", text)
         blocked = {"个人", "员工", "人才", "领导力", "执行层", "战术层", "管理层", "报告", "评估", "通俗", "解读"}
+        prefix_pattern = r"^(?:生成|输出|撰写|查看|打开|分析|制作|形成|产出)"
         patterns = [
             r"(?:姓名|对象|被评估人|人员|报告对象)[:：]\s*([\u4e00-\u9fa5]{2,4})",
             r"([\u4e00-\u9fa5]{2,4})\s*(?:-|_|\s)?(?:执行层|战术层|管理层)?(?:领导力)?\s*360",
-            r"([\u4e00-\u9fa5]{2,4})\s*360[°度]?",
+            r"([\u4e00-\u9fa5]{2,4})的?\s*360[°度]?",
         ]
         for pattern in patterns:
             for match in re.finditer(pattern, text, re.I):
                 name = match.group(1).strip()
+                name = re.sub(prefix_pattern, "", name)
                 if name and name not in blocked and not any(word in name for word in blocked):
                     return name
         return ""
@@ -943,6 +1115,83 @@ class DataStore(TalentReviewStoreMixin):
                 chunk.append(line.strip())
         return re.sub(r"\s+", " ", " ".join(chunk)).strip()
 
+    def _clean_metric_value(self, value: str, limit=40):
+        text = re.sub(r"[*`]+", "", str(value or "")).strip()
+        text = re.split(r"\s{2,}|[。；;]\s*", text, 1)[0].strip()
+        return text[:limit]
+
+    def _extract_360_text_metric(self, markdown: str, label: str, limit=40):
+        pattern = rf"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?\s*{re.escape(label)}\s*(?:\*\*)?\s*[：:]\s*(.+?)\s*$"
+        match = re.search(pattern, markdown or "")
+        if match:
+            return self._clean_metric_value(match.group(1), limit)
+        if label == "排名":
+            rank_match = re.search(r"(?:排名|项目中排名)\s*[：:]?\s*([0-9,]+\s*/\s*[0-9,]+)", markdown or "")
+            if rank_match:
+                return self._clean_metric_value(rank_match.group(1), limit)
+        return ""
+
+    def _extract_360_score_metric(self, markdown: str, label: str):
+        value = self._extract_360_text_metric(markdown, label, limit=16)
+        match = re.search(r"([0-5](?:\.\d{1,2})?)", value)
+        if match:
+            return float(match.group(1))
+        alias_patterns = {
+            "他评总分": [
+                r"(?:总体他评|整体他评|他评总分|你的他评(?:总分)?|他评)\s*[：:]\s*\**([0-5](?:\.\d{1,2})?)",
+                r"他评(?:总分)?是\s*\**([0-5](?:\.\d{1,2})?)",
+            ],
+            "自评": [
+                r"自评\s*[：:]\s*\**([0-5](?:\.\d{1,2})?)",
+                r"自评(?:总分)?是\s*\**([0-5](?:\.\d{1,2})?)",
+            ],
+        }
+        for pattern in alias_patterns.get(label, []):
+            alias_match = re.search(pattern, markdown or "", re.I)
+            if alias_match:
+                return float(alias_match.group(1))
+        return None
+
+    def _extract_360_role_scores(self, markdown: str):
+        scores = {}
+        for label in ("上级", "同事", "下级", "自评"):
+            score = self._extract_360_score_metric(markdown, label)
+            if score is None:
+                patterns = [
+                    rf"{re.escape(label)}(?:评分|总分)?\s*[：:]\s*\**([0-5](?:\.\d{{1,2}})?)",
+                    rf"{re.escape(label)}(?:评分|总分)?\s+\**([0-5](?:\.\d{{1,2}})?)",
+                    rf"{re.escape(label)}是\s*\**([0-5](?:\.\d{{1,2}})?)",
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, markdown or "", re.I)
+                    if match:
+                        score = float(match.group(1))
+                        break
+            if score is not None:
+                scores[label] = score
+        return scores
+
+    def _extract_360_capability_scores(self, markdown: str):
+        blocked = {"他评总分", "自评", "上级", "同事", "下级", "排名", "下级与上级差距"}
+        rows = []
+        patterns = [
+            r"能力项[：:]\s*([^—\-\n：:]{2,24})[—\-]+他评\s*([0-5](?:\.\d{1,2})?)(?:[^\n]{0,24}?自评\s*([0-5](?:\.\d{1,2})?))?",
+            r"^\s*(?:[-*]\s*)?([^：:\n—\-]{2,24})[：:]\s*他评\s*([0-5](?:\.\d{1,2})?)(?:[^\n]{0,24}?自评\s*([0-5](?:\.\d{1,2})?))?",
+            r"^\s*(?:[-*]\s*)?([^：:\n—\-]{2,24})[—\-]+他评\s*([0-5](?:\.\d{1,2})?)(?:[^\n]{0,24}?自评\s*([0-5](?:\.\d{1,2})?))?",
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, markdown or "", re.M):
+                name = re.sub(r"[*`]+", "", match.group(1)).strip()
+                if not name or name in blocked or len(name) > 24:
+                    continue
+                score = float(match.group(2))
+                self_score = match.group(3)
+                rows.append({"name": name, "score": score, "selfScore": float(self_score) if self_score else None})
+        unique = {}
+        for row in rows:
+            unique.setdefault(row["name"], row)
+        return list(unique.values())
+
     def _score_row_html(self, label: str, score: float, color: str):
         width = max(0, min(100, score / 5 * 100))
         return (
@@ -966,54 +1215,60 @@ class DataStore(TalentReviewStoreMixin):
 
     def _report_360_html_document(self, report):
         title = report.get("title") or "360报告解读"
-        markdown = self._clean_report_content(report.get("content", ""))
+        markdown = self._clean_report_content(report.get("content") or report.get("mdContent", ""))
         first_title = ""
         first_heading = re.search(r"^#\s+(.+)$", markdown, re.M)
         if first_heading:
             first_title = first_heading.group(1).strip()
         summary = self._first_markdown_section_text(markdown, "一句话总结")
         body = self._report_markdown_body_html(markdown, skip_first_title=first_title)
-        metrics = [
-            ("他评总分", "4.54", "整体认可度较高"),
-            ("排名", "25 / 249", "干部360评价活动"),
-            ("自评", "4.48", "自他认知基本一致"),
-            ("上级 / 同事 / 下级", "4.30 / 4.58 / 4.83", "下级感受最强，上级期待更高"),
-        ]
+        total_score = self._extract_360_score_metric(markdown, "他评总分")
+        rank = self._extract_360_text_metric(markdown, "排名", limit=24)
+        role_scores = self._extract_360_role_scores(markdown)
+        capability_scores = self._extract_360_capability_scores(markdown)
+        metrics = []
+        if total_score is not None:
+            metrics.append(("他评总分", f"{total_score:.2f}", "从报告正文识别"))
+        if rank:
+            metrics.append(("排名", rank, "从报告正文识别"))
+        if role_scores.get("自评") is not None:
+            metrics.append(("自评", f"{role_scores['自评']:.2f}", "从报告正文识别"))
+        role_metric_values = [f"{role_scores[label]:.2f}" for label in ("上级", "同事", "下级") if role_scores.get(label) is not None]
+        if role_metric_values:
+            metrics.append(("上级 / 同事 / 下级", " / ".join(role_metric_values), "从报告正文识别"))
+        if not metrics:
+            metrics.append(("关键指标", "未识别", "请确认正文包含他评总分、排名或角色评分"))
         metrics_html = "".join(
             "<article class=\"metric-card\">"
             f"<span>{html_lib.escape(name)}</span><strong>{html_lib.escape(value)}</strong><em>{html_lib.escape(note)}</em>"
             "</article>"
             for name, value, note in metrics
         )
+        score_colors = {"上级": "#f59e0b", "同事": "#2563eb", "下级": "#0f9f8f", "自评": "#e85d75"}
         role_html = "".join(
-            [
-                self._score_row_html("上级", 4.30, "#f59e0b"),
-                self._score_row_html("同事", 4.58, "#2563eb"),
-                self._score_row_html("下级", 4.83, "#0f9f8f"),
-                self._score_row_html("自评", 4.48, "#e85d75"),
-            ]
+            self._score_row_html(label, role_scores[label], score_colors[label])
+            for label in ("上级", "同事", "下级", "自评")
+            if role_scores.get(label) is not None
         )
+        role_html = role_html or "<p class=\"muted-note\">未从正文识别到上级、同事、下级或自评分数。</p>"
+        ranked_capabilities = sorted(capability_scores, key=lambda item: item["score"], reverse=True)
         strength_html = "".join(
-            [
-                self._chip_card_html("务实正直", "4.96", "可靠扎实，业务判断被多方认可", "positive"),
-                self._chip_card_html("小步快跑快速迭代", "4.93", "快速识别问题、推动优化闭环", "positive"),
-                self._chip_card_html("坚定从容", "4.73", "压力场景下稳定团队节奏", "positive"),
-            ]
+            self._chip_card_html(item["name"], f"{item['score']:.2f}", "正文识别的高分能力项", "positive")
+            for item in ranked_capabilities[:3]
         )
         development_html = "".join(
-            [
-                self._chip_card_html("引入和培养高潜", "4.40 / 自评4.00", "团队梯队建设要机制化", "caution"),
-                self._chip_card_html("整合资源树立标杆", "4.26", "用标杆和机制放大影响", "caution"),
-                self._chip_card_html("玩心热爱", "4.30 / 自评5.00", "创新热情需要更外显", "caution"),
-            ]
+            self._chip_card_html(
+                item["name"],
+                f"{item['score']:.2f}" + (f" / 自评{item['selfScore']:.2f}" if item.get("selfScore") is not None else ""),
+                "正文识别的发展关注项",
+                "caution",
+            )
+            for item in sorted(capability_scores, key=lambda item: item["score"])[:3]
         )
-        quadrant_html = "".join(
-            [
-                self._quadrant_cell_html("优势共识区：自评高 / 他评高", "q-good", ["务实正直", "小步快跑快速迭代", "坚定从容"]),
-                self._quadrant_cell_html("外显加强区：自评高 / 他评相对低", "q-watch", ["玩心热爱", "打破常规敢于尝试"]),
-                self._quadrant_cell_html("待发展共识区：自评低 / 他评相对低", "q-dev", ["引入和培养高潜", "整合资源树立标杆", "流程机制提效能"]),
-                self._quadrant_cell_html("潜在低估区：自评低 / 他评高", "q-muted", ["暂无明显项", "后续持续观察"]),
-            ]
+        capability_html = (
+            f"<div class=\"chip-grid\">{strength_html}</div><div style=\"height:10px\"></div><div class=\"chip-grid\">{development_html}</div>"
+            if strength_html or development_html
+            else "<p class=\"muted-note\">未从正文识别到能力项分数，详细内容请查看下方报告正文。</p>"
         )
         css = (
             ":root{--bg:#f5f7fb;--surface:#fff;--ink:#18202f;--muted:#657084;--line:#dfe5ef;--blue:#2457d6;--blue-soft:#eaf1ff;--teal:#0f9f8f;--teal-soft:#e9f8f5;--amber:#c97800;--amber-soft:#fff3dd;--rose:#c84662;--rose-soft:#fff0f3;--slate:#253044;--shadow:0 18px 48px rgba(24,32,47,.10)}"
@@ -1024,6 +1279,7 @@ class DataStore(TalentReviewStoreMixin):
             ".metric-card{padding:14px;border:1px solid var(--line);border-radius:14px;background:#fbfcff}.metric-card span{display:block;color:var(--muted);font-size:13px;font-weight:700}.metric-card strong{display:block;margin-top:4px;color:var(--blue);font-size:26px;line-height:1.15}.metric-card em{display:block;margin-top:6px;color:var(--muted);font-style:normal;font-size:12px}"
             ".insight-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}.insight-panel{padding:20px}.insight-panel h2,.report-section h2{margin:0 0 14px;font-size:22px;line-height:1.35}.score-row{display:grid;grid-template-columns:56px minmax(0,1fr) 46px;gap:10px;align-items:center;margin:12px 0}.score-row span{color:var(--muted);font-weight:700}.score-row strong{text-align:right}.score-track{height:12px;border-radius:999px;background:#edf1f7;overflow:hidden}.score-track i{display:block;height:100%;border-radius:inherit}"
             ".chip-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.chip-card{min-height:128px;padding:14px;border-radius:14px;border:1px solid var(--line)}.chip-card b{display:block;font-size:15px}.chip-card span{display:inline-flex;margin:8px 0;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:800}.chip-card p{margin:0;color:var(--muted);font-size:13px}.chip-card.positive{background:var(--teal-soft);border-color:#bfe8e0}.chip-card.positive span{color:#08766b;background:rgba(15,159,143,.12)}.chip-card.caution{background:var(--amber-soft);border-color:#f3d29b}.chip-card.caution span{color:#9b5700;background:rgba(201,120,0,.12)}"
+            ".muted-note{margin:0;color:var(--muted);font-size:13px}"
             ".quadrant-panel{margin:18px 0;padding:22px}.quadrant-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;margin-bottom:14px}.quadrant-head h2{margin:0;font-size:22px}.quadrant-head p{margin:0;color:var(--muted);font-size:13px}.quadrant-wrap{display:grid;grid-template-columns:42px 1fr;gap:10px;align-items:stretch}.axis-y{writing-mode:vertical-rl;transform:rotate(180deg);display:grid;place-items:center;color:var(--muted);font-size:12px;font-weight:800}.quadrant-grid{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:10px}.quadrant-grid:before,.quadrant-grid:after{content:'';position:absolute;background:rgba(37,48,68,.18)}.quadrant-grid:before{width:1px;top:0;bottom:0;left:50%}.quadrant-grid:after{height:1px;left:0;right:0;top:50%}"
             ".quadrant-cell{min-height:154px;padding:16px;border-radius:14px;border:1px solid var(--line);background:#fbfcff}.quadrant-cell h4{margin:0 0 12px;font-size:15px}.q-good{background:var(--teal-soft)}.q-watch{background:var(--rose-soft)}.q-dev{background:var(--amber-soft)}.q-muted{background:#f2f5fa}.quadrant-tags{display:flex;gap:8px;flex-wrap:wrap}.quadrant-tags span{padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.72);border:1px solid rgba(24,32,47,.10);font-size:12px;font-weight:750}.axis-x{margin:8px 0 0 52px;display:flex;justify-content:space-between;color:var(--muted);font-size:12px;font-weight:800}"
             ".report-section{margin-top:18px;padding:24px}.report-section h3{margin:24px 0 10px;font-size:18px;color:var(--blue)}.report-section h4{margin:18px 0 8px;font-size:15px;color:var(--slate)}p{margin:10px 0}ul,ol{margin:10px 0 0 22px;padding:0}li{margin:6px 0}strong{color:#111827}code{padding:2px 6px;border-radius:6px;background:#edf1f7;color:#334155}blockquote{margin:14px 0;padding:14px 16px;border:1px solid #c9d8ff;border-radius:12px;background:var(--blue-soft);color:#1c3f97;font-weight:650}.table-wrap{overflow-x:auto;margin:14px 0;border:1px solid var(--line);border-radius:14px}table{width:100%;min-width:760px;border-collapse:collapse;background:#fff}th,td{padding:12px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f3f6fb;color:#344054;font-size:13px}td{color:#344054}tr:last-child td{border-bottom:0}hr{border:0;border-top:1px solid var(--line);margin:18px 0}"
@@ -1040,10 +1296,7 @@ class DataStore(TalentReviewStoreMixin):
             f"<div class=\"summary-box\"><b>一句话总结</b><p>{self._inline_markdown_to_html(summary)}</p></div>"
             f"</div><aside class=\"hero-panel\" aria-label=\"关键指标\">{metrics_html}</aside></section>"
             f"<section class=\"insight-grid\"><div class=\"insight-panel\"><h2>角色评分对比</h2>{role_html}</div>"
-            f"<div class=\"insight-panel\"><h2>优势与发展抓手</h2><div class=\"chip-grid\">{strength_html}</div><div style=\"height:10px\"></div><div class=\"chip-grid\">{development_html}</div></div></section>"
-            "<section class=\"quadrant-panel\"><div class=\"quadrant-head\"><div><h2>个人发展四宫格</h2><p>用自评与他评的相对位置，帮助 HRBP 快速定位沟通重点。</p></div></div>"
-            f"<div class=\"quadrant-wrap\"><div class=\"axis-y\">他评：低 → 高</div><div class=\"quadrant-grid\">{quadrant_html}</div></div>"
-            "<div class=\"axis-x\"><span>自评低</span><span>自评高</span></div></section>"
+            f"<div class=\"insight-panel\"><h2>优势与发展抓手</h2>{capability_html}</div></section>"
             f"{body}</main></body></html>"
         )
 
@@ -1116,6 +1369,8 @@ class DataStore(TalentReviewStoreMixin):
         return {**report, "mdPath": str(path)}
 
     def _with_report_html_content(self, report):
+        if report.get("reportType") == "360":
+            return {**report, "htmlContent": self._report_html_document(report)}
         html_path = self._resolve_report_path(report.get("htmlPath", ""))
         if html_path and html_path.exists() and html_path.is_file():
             try:
@@ -1190,9 +1445,17 @@ class DataStore(TalentReviewStoreMixin):
         if report_id:
             for report in reports:
                 if report.get("id") == report_id:
-                    return self._with_report_html_content(self._with_report_markdown_content(report))
+                    report = self._with_report_markdown_content(report)
+                    if report.get("reportType") == "360":
+                        return {**report, "htmlContent": self._report_html_document(report)}
+                    return self._with_report_html_content(report)
             return {"content": "", "updatedAt": "", "source": "none"}
-        return self._with_report_html_content(self._with_report_markdown_content(reports[0])) if reports else {"content": "", "updatedAt": "", "source": "none"}
+        if not reports:
+            return {"content": "", "updatedAt": "", "source": "none"}
+        report = self._with_report_markdown_content(reports[0])
+        if report.get("reportType") == "360":
+            return {**report, "htmlContent": self._report_html_document(report)}
+        return self._with_report_html_content(report)
 
     def generated_report_list(self):
         return [
@@ -1296,18 +1559,25 @@ class DataStore(TalentReviewStoreMixin):
         )
         if not isinstance(saved, dict):
             saved = {}
+        secrets = self._read_json(self.ai_secrets_path, {}) if self.ai_secrets_path.exists() else {}
+        if not isinstance(secrets, dict):
+            secrets = {}
 
         def group_config(name, legacy=False):
             raw = saved.get(name, {}) if isinstance(saved.get(name, {}), dict) else {}
+            secret = secrets.get(name, {}) if isinstance(secrets.get(name, {}), dict) else {}
             if legacy:
                 raw = {
-                    "apiKey": raw.get("apiKey", ""),
+                    "apiKey": raw.get("apiKey", saved.get("apiKey", "")),
                     "baseUrl": raw.get("baseUrl", saved.get("baseUrl", "https://api.openai.com/v1")),
                     "model": raw.get("model", saved.get("model", "")),
                 }
+                secret = {
+                    "apiKey": secret.get("apiKey", secrets.get("apiKey", "")) or raw.get("apiKey", ""),
+                }
             env_name = "HROBOT_AI_API_KEY" if name == "multimodal" else "HROBOT_IMAGE_API_KEY"
             return {
-                "apiKey": os.environ.get(env_name) or self._runtime_ai_keys.get(name, "") or "",
+                "apiKey": os.environ.get(env_name) or secret.get("apiKey", "") or self._runtime_ai_keys.get(name, "") or "",
                 "baseUrl": raw.get("baseUrl", "https://api.openai.com/v1"),
                 "model": raw.get("model", ""),
             }
@@ -1333,16 +1603,211 @@ class DataStore(TalentReviewStoreMixin):
             "updatedAt": config.get("updatedAt", ""),
         }
 
+    def mcp_config(self):
+        saved = self._read_json(
+            self.mcp_config_path,
+            {
+                "url": "",
+                "headers": {},
+            },
+        )
+        if not isinstance(saved, dict):
+            saved = {}
+        headers = saved.get("headers", {}) if isinstance(saved.get("headers", {}), dict) else {}
+        api_key = os.environ.get("HROBOT_MCP_API_KEY") or headers.get("x-api-key", "")
+        return {
+            "url": os.environ.get("HROBOT_MCP_URL") or saved.get("url", ""),
+            "headers": {
+                **headers,
+                **({"x-api-key": api_key} if api_key else {}),
+            },
+        }
+
+    def update_config(self):
+        saved = self._read_json(self.update_config_path, {}) if self.update_config_path.exists() else {}
+        if not isinstance(saved, dict):
+            saved = {}
+        return {
+            "sourcePath": str(saved.get("sourcePath") or ""),
+            "updatedAt": str(saved.get("updatedAt") or ""),
+        }
+
+    def save_update_config(self, config):
+        current = self.update_config()
+        source_path = str(config.get("sourcePath") or current.get("sourcePath") or "").strip()
+        payload = {
+            "sourcePath": source_path,
+            "updatedAt": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+        }
+        self.update_config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.update_config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return self.update_config()
+
+    def _is_update_url(self, source):
+        parsed = urlparse(str(source or "").strip())
+        return parsed.scheme in {"http", "https"}
+
+    def _read_update_url_json(self, url):
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/json, text/plain;q=0.9, */*;q=0.1",
+                "User-Agent": "Hrobot-Updater/0.1",
+            },
+        )
+        with urlopen(request, timeout=20) as response:
+            content_type = response.headers.get("Content-Type", "")
+            raw = response.read(1024 * 1024)
+        text = raw.decode("utf-8-sig")
+        stripped = text.lstrip()
+        if stripped.startswith("<"):
+            raise ValueError("更新源返回的是网页，不是 release.json。企业微信分享页通常不能作为自动更新直链，请使用可直接访问的 release.json URL。")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"更新源不是有效 JSON：{error}") from error
+
+    def _download_update_url(self, url, destination: Path):
+        request = Request(url, headers={"User-Agent": "Hrobot-Updater/0.1"})
+        with urlopen(request, timeout=120) as response:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with open(destination, "wb") as output:
+                shutil.copyfileobj(response, output)
+        return destination
+
+    def _update_manifest_path(self, source_path=""):
+        configured = str(source_path or self.update_config().get("sourcePath") or "").strip().strip('"')
+        if not configured:
+            raise ValueError("请先填写企业微信网盘同步目录或 release.json 路径。")
+        if self._is_update_url(configured):
+            return configured
+        path = Path(configured).expanduser()
+        if path.is_dir():
+            path = path / "release.json"
+        if path.name.lower() != "release.json":
+            raise ValueError("更新源需指向包含 release.json 的目录，或直接指向 release.json 文件。")
+        if not path.exists():
+            raise FileNotFoundError(f"未找到更新清单：{path}")
+        return path
+
+    def _read_update_release(self, source_path=""):
+        manifest_ref = self._update_manifest_path(source_path)
+        is_url = self._is_update_url(manifest_ref)
+        release = self._read_update_url_json(manifest_ref) if is_url else self._read_json(manifest_ref, {})
+        if not isinstance(release, dict):
+            raise ValueError("release.json 格式不正确。")
+        version = str(release.get("version") or "").strip()
+        installer_name = str(
+            release.get("installer")
+            or release.get("file")
+            or release.get("package")
+            or "HrobotSetup.exe"
+        ).strip()
+        if not version:
+            raise ValueError("release.json 缺少 version。")
+        if not installer_name:
+            raise ValueError("release.json 缺少 installer 文件名。")
+        if is_url:
+            installer_ref = installer_name if self._is_update_url(installer_name) else urljoin(manifest_ref, installer_name)
+            installer_suffix = Path(urlparse(installer_ref).path).suffix.lower()
+            manifest_parent = manifest_ref.rsplit("/", 1)[0] + "/"
+        else:
+            installer_ref = Path(installer_name)
+            if not installer_ref.is_absolute():
+                installer_ref = manifest_ref.parent / installer_ref
+            installer_suffix = installer_ref.suffix.lower()
+            manifest_parent = str(manifest_ref.parent)
+        if installer_suffix != ".exe":
+            raise ValueError("当前 Windows 更新只支持 .exe 安装包。")
+        current = app_version_payload()
+        return {
+            "current": current,
+            "latest": {
+                "version": version,
+                "installer": Path(urlparse(str(installer_ref)).path).name if is_url else installer_ref.name,
+                "installerPath": str(installer_ref),
+                "installerSourceType": "url" if is_url else "file",
+                "notes": str(release.get("notes") or release.get("changelog") or ""),
+                "publishedAt": str(release.get("publishedAt") or ""),
+            },
+            "manifestPath": str(manifest_ref),
+            "sourcePath": manifest_parent,
+            "sourceType": "url" if is_url else "file",
+            "updateAvailable": is_newer_version(version, current["version"]),
+        }
+
+    def update_status(self, source_path=""):
+        config = self.update_config()
+        payload = {
+            "app": app_version_payload(),
+            "config": config,
+            "checkedAt": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+            "configured": bool(config.get("sourcePath")),
+            "updateAvailable": False,
+        }
+        source = source_path or config.get("sourcePath") or ""
+        if not source:
+            return payload
+        release = self._read_update_release(source)
+        return {**payload, **release, "configured": True}
+
+    def install_update(self, source_path=""):
+        status = self.update_status(source_path)
+        latest = status.get("latest") or {}
+        installer_path = Path(latest.get("installerPath") or "")
+        if not status.get("updateAvailable"):
+            return {**status, "started": False, "message": "当前已经是最新版本。"}
+        source_type = latest.get("installerSourceType") or "file"
+        if source_type == "file" and not installer_path.exists():
+            raise FileNotFoundError(f"未找到安装包：{installer_path}")
+        temp_dir = Path(tempfile.gettempdir()) / "hrobot-update"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        local_installer = temp_dir / (latest.get("installer") or "HrobotSetup.exe")
+        if source_type == "url":
+            self._download_update_url(latest.get("installerPath") or "", local_installer)
+        else:
+            shutil.copy2(installer_path, local_installer)
+        kwargs = {
+            "cwd": str(local_installer.parent),
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen([str(local_installer)], **kwargs)
+        return {
+            **status,
+            "started": True,
+            "localInstaller": str(local_installer),
+            "message": "更新安装包已启动。安装完成后会重新打开 Hrobot。",
+        }
+
     def save_ai_config(self, config):
         current = self.ai_config()
         timestamp = datetime.now(timezone.utc).isoformat()
+        secrets = self._read_json(self.ai_secrets_path, {}) if self.ai_secrets_path.exists() else {}
+        if not isinstance(secrets, dict):
+            secrets = {}
+        saved_raw = self._read_json(self.ai_config_path, {}) if self.ai_config_path.exists() else {}
+        if not isinstance(saved_raw, dict):
+            saved_raw = {}
+        secrets_changed = False
+
+        legacy_api_key = saved_raw.get("apiKey", "")
+        if legacy_api_key and not secrets.get("multimodal"):
+            secrets["multimodal"] = {"apiKey": legacy_api_key}
+            secrets_changed = True
 
         def merge_group(name):
+            nonlocal secrets_changed
             incoming = config.get(name, {}) if isinstance(config.get(name, {}), dict) else {}
             existing = current.get(name, {})
             api_key = incoming.get("apiKey")
             if api_key:
                 self._runtime_ai_keys[name] = api_key
+                secrets[name] = {"apiKey": api_key}
+                secrets_changed = True
             return {
                 "apiKey": "",
                 "baseUrl": incoming.get("baseUrl") or existing.get("baseUrl", "https://api.openai.com/v1"),
@@ -1364,6 +1829,9 @@ class DataStore(TalentReviewStoreMixin):
         }
         self.ai_config_path.parent.mkdir(parents=True, exist_ok=True)
         self.ai_config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        if secrets_changed:
+            self.ai_secrets_path.parent.mkdir(parents=True, exist_ok=True)
+            self.ai_secrets_path.write_text(json.dumps(secrets, ensure_ascii=False, indent=2), encoding="utf-8")
         return self.ai_config_status()
 
     def _first_query_value(self, query, name):
@@ -1498,6 +1966,17 @@ class DataStore(TalentReviewStoreMixin):
             finished_at = datetime.now(LOCAL_TZ).isoformat(timespec="seconds")
             ok = completed.returncode == 0
             message = (completed.stdout or completed.stderr or "").strip()
+            if not ok:
+                _agent_debug_log(
+                    "server.py:update_intelligence_now",
+                    "intelligence script failed",
+                    {
+                        "returncode": completed.returncode,
+                        "stdoutPreview": (completed.stdout or "")[:500],
+                        "stderrPreview": (completed.stderr or "")[:500],
+                    },
+                    "H5",
+                )
             status = {
                 **status,
                 "running": False,
@@ -1730,444 +2209,6 @@ class DataStore(TalentReviewStoreMixin):
         self.design_prompt_config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return self.design_prompt_config()
 
-    @staticmethod
-    def _agent_timestamp():
-        return datetime.now(timezone.utc).isoformat()
-
-    @staticmethod
-    def _agent_slug(value):
-        value = str(value or "").strip().lower()
-        slug = re.sub(r"[^a-z0-9_-]+", "-", value).strip("-")
-        return slug or f"web-{uuid.uuid4().hex[:8]}"
-
-    @staticmethod
-    def _url_path(value):
-        return "/".join(quote(part) for part in str(value or "").replace("\\", "/").split("/") if part)
-
-    def _agent_manifest(self):
-        payload = self._read_json(self.agent_manifest_path, DEFAULT_AGENT_PROJECT_CENTER)
-        if not isinstance(payload, dict):
-            payload = dict(DEFAULT_AGENT_PROJECT_CENTER)
-        projects = [item for item in payload.get("projects", []) if isinstance(item, dict)]
-        return {"updatedAt": payload.get("updatedAt", ""), "projects": projects}
-
-    def _save_agent_manifest(self, projects):
-        payload = {
-            "updatedAt": self._agent_timestamp(),
-            "projects": sorted(projects, key=lambda item: item.get("updatedAt", ""), reverse=True),
-        }
-        self.agent_center_dir.mkdir(parents=True, exist_ok=True)
-        self.agent_manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return payload
-
-    def _safe_extract_zip(self, zip_path: Path, target_dir: Path):
-        target_dir.mkdir(parents=True, exist_ok=True)
-        file_count = 0
-        total_size = 0
-        with ZipFile(zip_path) as archive:
-            for member in archive.infolist():
-                raw_name = member.filename.replace("\\", "/")
-                if member.is_dir() or raw_name.startswith("__MACOSX/") or raw_name.endswith(".DS_Store"):
-                    continue
-                if raw_name.startswith("/") or re.match(r"^[A-Za-z]:", raw_name):
-                    raise ValueError("Zip 中包含不安全的绝对路径。")
-                parts = [part for part in raw_name.split("/") if part and part != "."]
-                if not parts or any(part == ".." for part in parts):
-                    raise ValueError("Zip 中包含不安全的相对路径。")
-                output_path = target_dir.joinpath(*parts)
-                if not str(output_path.resolve()).startswith(str(target_dir.resolve())):
-                    raise ValueError("Zip 解压路径越界。")
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(member) as source, output_path.open("wb") as target:
-                    shutil.copyfileobj(source, target)
-                file_count += 1
-                total_size += member.file_size
-        if file_count == 0:
-            raise ValueError("Zip 中没有可用文件。")
-        return file_count, total_size
-
-    def _find_project_entry(self, project_dir: Path):
-        direct = project_dir / "index.html"
-        if direct.exists():
-            return direct
-        candidates = sorted(project_dir.rglob("index.html"), key=lambda item: (len(item.relative_to(project_dir).parts), str(item)))
-        if candidates:
-            return candidates[0]
-        html_files = sorted(project_dir.rglob("*.html"), key=lambda item: (len(item.relative_to(project_dir).parts), str(item)))
-        if html_files:
-            return html_files[0]
-        raise ValueError("未找到 index.html 或其他 HTML 入口文件。")
-
-    @staticmethod
-    def _html_title(path: Path):
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")[:20000]
-        except OSError:
-            return ""
-        match = re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.IGNORECASE | re.DOTALL)
-        if not match:
-            return ""
-        title = re.sub(r"\s+", " ", html_lib.unescape(match.group(1))).strip()
-        return title[:80]
-
-    @staticmethod
-    def _plain_text_summary(text, limit=92):
-        text = re.sub(r"```[\s\S]*?```", " ", text)
-        text = re.sub(r"`([^`]*)`", r"\1", text)
-        text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text)
-        text = re.sub(r"\[[^\]]+\]\([^)]+\)", " ", text)
-        text = re.sub(r"https?://\S+", " ", text)
-        lines = []
-        for line in text.splitlines():
-            line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
-            line = re.sub(r"^\s*[-*+]\s+", "", line)
-            line = re.sub(r"^\s*\d+[.)]\s+", "", line)
-            line = re.sub(r"\s+", " ", line).strip(" #|-*_")
-            if not line or line.lower().startswith(("usage", "install", "start")):
-                continue
-            if re.search(r"(使用说明|运行前准备|Python|下载地址|一键启动|免 Python|安装|浏览器|双击|chmod|PyInstaller|端口|Windows|Mac|终端|命令行|启动)", line, re.IGNORECASE):
-                continue
-            if line:
-                lines.append(line)
-            if len(" ".join(lines)) >= limit:
-                break
-        summary = " ".join(lines).strip()
-        return summary[:limit].rstrip("，,。.;； ") if len(summary) > limit else summary
-
-    @staticmethod
-    def _description_from_title(title=""):
-        title = str(title or "")
-        if "人才" in title and ("盘点" in title or "九宫格" in title):
-            return "用于查看人才盘点结果、九宫格校准和本地报告资料的独立 Web 功能。"
-        if "九宫格" in title:
-            return "用于查看九宫格分布、校准记录和相关人才数据的独立 Web 功能。"
-        return ""
-
-    @staticmethod
-    def _description_is_setup_text(description=""):
-        return bool(re.search(r"(运行前准备|Python|下载地址|一键启动|免 Python|安装|浏览器|双击|chmod|PyInstaller|Windows|Mac|终端|命令行|启动|本机访问|局域网|运行)", str(description or ""), re.IGNORECASE))
-
-    def _project_description(self, project_dir: Path, title=""):
-        title_description = self._description_from_title(title)
-        if title_description:
-            return title_description
-        readme_names = {
-            "readme.md",
-            "readme_使用说明.md",
-            "使用说明.md",
-            "说明.md",
-        }
-        candidates = []
-        for path in project_dir.rglob("*"):
-            if path.is_file() and path.name.lower() in readme_names:
-                candidates.append(path)
-        for path in sorted(candidates, key=lambda item: (len(item.parts), item.name.lower())):
-            with contextlib.suppress(OSError):
-                summary = self._plain_text_summary(path.read_text(encoding="utf-8", errors="ignore"))
-                if summary and summary != title and not self._description_is_setup_text(summary):
-                    return summary
-        return ""
-
-    def _project_metadata(self, project_id, project_dir: Path, source_zip: Path, file_count=None, total_size=None):
-        entry = self._find_project_entry(project_dir)
-        entry_rel = entry.relative_to(project_dir).as_posix()
-        title = self._html_title(entry) or source_zip.stem
-        description = self._project_description(project_dir, title)
-        server_path = self._find_project_server(project_dir, entry)
-        server_rel = server_path.relative_to(project_dir).as_posix() if server_path else ""
-        if file_count is None or total_size is None:
-            files = [path for path in project_dir.rglob("*") if path.is_file()]
-            file_count = len(files)
-            total_size = sum(path.stat().st_size for path in files)
-        timestamp = self._agent_timestamp()
-        return {
-            "id": project_id,
-            "name": title,
-            "description": description,
-            "sourceZip": source_zip.name,
-            "sourceZipMtime": source_zip.stat().st_mtime_ns if source_zip.exists() else 0,
-            "entry": entry_rel,
-            "entryUrl": f"/data/agent_center/projects/{quote(project_id)}/{self._url_path(entry_rel)}",
-            "serverEntry": server_rel,
-            "runtime": "python-server" if server_rel else "static-web",
-            "folderPath": str(project_dir),
-            "fileCount": file_count,
-            "size": total_size,
-            "kind": "static-web",
-            "createdAt": timestamp,
-            "updatedAt": timestamp,
-        }
-
-    def _import_agent_zip_path(self, zip_path: Path):
-        if not zip_path.exists() or zip_path.suffix.lower() != ".zip":
-            raise ValueError("请提供独立 Web 项目的 zip 文件。")
-        project_id = f"{self._agent_slug(zip_path.stem)}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4]}"
-        project_dir = self.agent_project_dir / project_id
-        if project_dir.exists():
-            self._remove_agent_project_dir(project_dir)
-        file_count, total_size = self._safe_extract_zip(zip_path, project_dir)
-        return self._project_metadata(project_id, project_dir, zip_path, file_count=file_count, total_size=total_size)
-
-    def _remove_agent_project_dir(self, project_dir: Path):
-        project_dir = project_dir.resolve()
-        project_root = self.agent_project_dir.resolve()
-        if project_root not in [project_dir, *project_dir.parents]:
-            raise ValueError("项目目录不在允许删除的范围内。")
-        if not project_dir.exists():
-            return
-
-        def handle_remove_error(func, path, exc_info):
-            with contextlib.suppress(Exception):
-                os.chmod(path, 0o700)
-            func(path)
-
-        last_error = None
-        for _ in range(3):
-            try:
-                shutil.rmtree(project_dir, onerror=handle_remove_error)
-                return
-            except PermissionError as error:
-                last_error = error
-                time.sleep(0.5)
-            except OSError as error:
-                last_error = error
-                time.sleep(0.5)
-        raise RuntimeError(f"项目文件夹被其他程序占用，请关闭已打开的项目页面或文件夹后重试：{last_error}")
-
-    def _refresh_agent_project_runtime_metadata(self, project, project_dir: Path):
-        entry_rel = str(project.get("entry") or "").strip()
-        entry = project_dir / entry_rel if entry_rel else None
-        if not entry or not entry.exists():
-            with contextlib.suppress(Exception):
-                entry = self._find_project_entry(project_dir)
-        server_path = self._find_project_server(project_dir, entry)
-        server_rel = server_path.relative_to(project_dir).as_posix() if server_path else ""
-        runtime = "python-server" if server_rel else "static-web"
-        title = str(project.get("name") or "")
-        existing_description = str(project.get("description") or "").strip()
-        description = self._project_description(project_dir, title) if self._description_is_setup_text(existing_description) else existing_description
-        description = description or self._project_description(project_dir, title)
-        if project.get("serverEntry") == server_rel and project.get("runtime") == runtime and project.get("description", "") == description:
-            return project, False
-        return {**project, "description": description, "serverEntry": server_rel, "runtime": runtime}, True
-
-    def _find_project_server(self, project_dir: Path, entry: Path | None = None):
-        candidates = []
-        if entry:
-            for parent in [entry.parent, *entry.parents]:
-                if project_dir not in [parent, *parent.parents]:
-                    break
-                server_path = parent / "server.py"
-                if server_path.exists() and server_path.is_file():
-                    candidates.append(server_path)
-                    break
-        candidates.extend(path for path in project_dir.rglob("server.py") if path.is_file())
-        unique = []
-        seen = set()
-        for path in candidates:
-            resolved = path.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            unique.append(path)
-        return unique[0] if unique else None
-
-    @staticmethod
-    def _find_free_local_port():
-        for port in range(8768, 8999):
-            with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
-                try:
-                    sock.bind(("127.0.0.1", port))
-                    return port
-                except OSError:
-                    continue
-        with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
-            sock.bind(("127.0.0.1", 0))
-            return sock.getsockname()[1]
-
-    @staticmethod
-    def _agent_project_url_ready(url):
-        try:
-            with urlopen(Request(url, headers={"User-Agent": "AgentCenterRuntimeCheck/1.0"}), timeout=0.8):
-                return True
-        except Exception:
-            return False
-
-    def _agent_project_by_id(self, project_id):
-        project_id = str(project_id or "").strip()
-        if not project_id:
-            raise ValueError("缺少项目 ID。")
-        manifest = self._agent_manifest()
-        project = next((item for item in manifest["projects"] if item.get("id") == project_id), None)
-        if not project:
-            raise FileNotFoundError("未找到 Web 项目。")
-        project_dir = self.agent_project_dir / project_id
-        if not project_dir.exists():
-            raise FileNotFoundError("项目文件夹不存在。")
-        return project, project_dir
-
-    def _stop_agent_project_process(self, project_id):
-        with self._agent_process_lock:
-            runtime = self._agent_processes.pop(project_id, None)
-        if not runtime:
-            return False
-        process = runtime.get("process")
-        if process and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                process.kill()
-        log_file = runtime.get("log")
-        if log_file:
-            with contextlib.suppress(Exception):
-                log_file.close()
-        return True
-
-    def _stop_agent_project_orphan_processes(self, project_dir: Path):
-        if os.name != "nt":
-            return
-        needle = str(project_dir.resolve())
-        script = f"""
-$needle = @'
-{needle}
-'@
-Get-CimInstance Win32_Process |
-  Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains($needle) }} |
-  ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
-"""
-        with contextlib.suppress(Exception):
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", script],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                check=False,
-            )
-
-    def open_agent_project(self, project_id):
-        project, project_dir = self._agent_project_by_id(project_id)
-        server_entry = (project.get("serverEntry") or "").strip()
-        if not server_entry:
-            return {"project": project, "url": project.get("entryUrl", ""), "runtime": "static-web", "port": None}
-
-        server_path = (project_dir / server_entry).resolve()
-        if not server_path.exists() or project_dir.resolve() not in [server_path, *server_path.parents]:
-            raise FileNotFoundError("项目服务入口不存在。")
-
-        with self._agent_process_lock:
-            runtime = self._agent_processes.get(project_id)
-            if runtime and runtime["process"].poll() is None:
-                return {"project": project, "url": runtime["url"], "runtime": "python-server", "port": runtime["port"]}
-
-            port = self._find_free_local_port()
-            entry_path = (project_dir / str(project.get("entry") or "index.html")).resolve()
-            server_root = server_path.parent.resolve()
-            entry_rel = "index.html"
-            if server_root in [entry_path, *entry_path.parents]:
-                entry_rel = entry_path.relative_to(server_root).as_posix()
-            url = f"http://127.0.0.1:{port}/{self._url_path(entry_rel)}"
-            log_dir = self.agent_center_dir / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = (log_dir / f"{project_id}.log").open("a", encoding="utf-8")
-            command = [sys.executable, str(server_path), "--host", "127.0.0.1", "--port", str(port)]
-            kwargs = {
-                "cwd": str(server_path.parent),
-                "stdout": log_file,
-                "stderr": subprocess.STDOUT,
-                "stdin": subprocess.DEVNULL,
-            }
-            if os.name == "nt":
-                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            process = subprocess.Popen(command, **kwargs)
-            self._agent_processes[project_id] = {"process": process, "port": port, "url": url, "log": log_file}
-
-        deadline = time.time() + 8
-        while time.time() < deadline:
-            if process.poll() is not None:
-                raise RuntimeError(f"项目服务启动失败，日志：{log_dir / f'{project_id}.log'}")
-            if self._agent_project_url_ready(url):
-                break
-            time.sleep(0.25)
-        return {"project": project, "url": url, "runtime": "python-server", "port": port}
-
-    def _remove_agent_source_zip(self, source_zip_name):
-        source_zip = self.agent_zip_dir / Path(source_zip_name or "").name
-        if source_zip.exists() and source_zip.is_file():
-            source_zip.unlink()
-
-    def _sync_agent_zip_drop_folder(self, projects):
-        self.agent_zip_dir.mkdir(parents=True, exist_ok=True)
-        self.agent_project_dir.mkdir(parents=True, exist_ok=True)
-        seen = {(item.get("sourceZip"), item.get("sourceZipMtime")) for item in projects}
-        imported = []
-        for zip_path in sorted(self.agent_zip_dir.glob("*.zip"), key=lambda item: item.stat().st_mtime_ns):
-            signature = (zip_path.name, zip_path.stat().st_mtime_ns)
-            if signature in seen:
-                self._remove_agent_source_zip(zip_path.name)
-                continue
-            project = self._import_agent_zip_path(zip_path)
-            imported.append(project)
-            self._remove_agent_source_zip(project.get("sourceZip"))
-        return imported
-
-    def agent_projects(self):
-        manifest = self._agent_manifest()
-        projects = []
-        metadata_changed = False
-        for item in manifest["projects"]:
-            project_id = str(item.get("id", "")).strip()
-            if project_id and (self.agent_project_dir / project_id).exists():
-                refreshed, changed = self._refresh_agent_project_runtime_metadata(item, self.agent_project_dir / project_id)
-                metadata_changed = metadata_changed or changed
-                projects.append(refreshed)
-        imported = self._sync_agent_zip_drop_folder(projects)
-        if imported or metadata_changed or len(projects) != len(manifest["projects"]):
-            manifest = self._save_agent_manifest([*imported, *projects])
-            projects = manifest["projects"]
-        return {
-            "updatedAt": manifest.get("updatedAt", ""),
-            "projects": projects,
-            "count": len(projects),
-            "zipDropFolder": str(self.agent_zip_dir),
-            "projectFolder": str(self.agent_project_dir),
-        }
-
-    def import_agent_project_zip(self, filename, content):
-        if not content:
-            raise ValueError("请上传独立 Web 项目 zip。")
-        self.agent_zip_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = Path(filename or "agent-project.zip").name
-        if not safe_name.lower().endswith(".zip"):
-            raise ValueError("只支持 zip 文件。")
-        zip_path = self.agent_zip_dir / safe_name
-        if zip_path.exists():
-            zip_path = self.agent_zip_dir / f"{zip_path.stem}-{datetime.now().strftime('%Y%m%d%H%M%S')}{zip_path.suffix}"
-        zip_path.write_bytes(content)
-        manifest = self._agent_manifest()
-        project = self._import_agent_zip_path(zip_path)
-        self._remove_agent_source_zip(project.get("sourceZip"))
-        payload = self._save_agent_manifest([project, *manifest["projects"]])
-        return {**payload, "project": project, "count": len(payload["projects"]), "zipDropFolder": str(self.agent_zip_dir), "projectFolder": str(self.agent_project_dir)}
-
-    def delete_agent_project(self, project_id):
-        project_id = str(project_id or "").strip()
-        if not project_id:
-            raise ValueError("缺少项目 ID。")
-        manifest = self._agent_manifest()
-        project = next((item for item in manifest["projects"] if item.get("id") == project_id), None)
-        if not project:
-            raise FileNotFoundError("未找到要删除的 Web 项目。")
-        project_dir = self.agent_project_dir / project_id
-        self._stop_agent_project_process(project_id)
-        self._stop_agent_project_orphan_processes(project_dir)
-        if project_dir.exists():
-            self._remove_agent_project_dir(project_dir)
-        self._remove_agent_source_zip(project.get("sourceZip"))
-        projects = [item for item in manifest["projects"] if item.get("id") != project_id]
-        payload = self._save_agent_manifest(projects)
-        return {**payload, "count": len(payload["projects"]), "zipDropFolder": str(self.agent_zip_dir), "projectFolder": str(self.agent_project_dir)}
-
     def save_design_poster(self, poster):
         timestamp = datetime.now(timezone.utc).isoformat()
         poster_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -2207,6 +2248,18 @@ class Handler(SimpleHTTPRequestHandler):
     store = DataStore(DATA_DIR)
     allow_remote_clients = False
 
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except Exception as error:
+            _agent_debug_log(
+                "server.py:handle_one_request",
+                "unhandled request exception",
+                {"errorType": type(error).__name__, "error": str(error), "path": self.path},
+                "H5",
+            )
+            raise
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
@@ -2227,7 +2280,16 @@ class Handler(SimpleHTTPRequestHandler):
         return False
 
     def _send_json(self, payload, status=200):
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        try:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        except (TypeError, UnicodeEncodeError) as error:
+            _agent_debug_log(
+                "server.py:_send_json",
+                "json.dumps failed",
+                {"errorType": type(error).__name__, "error": str(error), "path": self.path, "status": status},
+                "H3",
+            )
+            raise
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -2246,9 +2308,26 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _read_request_json(self):
         length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length)
         try:
-            return json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-        except json.JSONDecodeError:
+            text = raw.decode("utf-8") or "{}"
+        except UnicodeDecodeError as error:
+            _agent_debug_log(
+                "server.py:_read_request_json",
+                "request body UTF-8 decode failed",
+                {"path": self.path, "length": length, "error": str(error)},
+                "H2",
+            )
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as error:
+            _agent_debug_log(
+                "server.py:_read_request_json",
+                "request JSON parse failed",
+                {"path": self.path, "preview": text[:200], "error": str(error)},
+                "H2",
+            )
             return None
 
     def _read_multipart_file(self):
@@ -2273,6 +2352,13 @@ class Handler(SimpleHTTPRequestHandler):
                 continue
             filename_match = re.search(r'filename="([^"]*)"', headers)
             filename = filename_match.group(1) if filename_match else "upload"
+            if filename and not filename.isascii():
+                _agent_debug_log(
+                    "server.py:_read_multipart_files",
+                    "non-ascii multipart filename",
+                    {"filename": filename, "path": self.path, "headersPreview": headers[:300]},
+                    "H2",
+                )
             if content.endswith(b"\r\n"):
                 content = content[:-2]
             files.append((filename, content))
@@ -2286,6 +2372,268 @@ class Handler(SimpleHTTPRequestHandler):
         }
 
     @staticmethod
+    def _ai_request_payload_with_tools(model, messages, tools):
+        payload = Handler._ai_request_payload(model, messages)
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        return payload
+
+    @staticmethod
+    def _safe_tool_name(index, name):
+        safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(name or f"tool_{index}")).strip("_")
+        safe = safe or f"tool_{index}"
+        return f"mcp_{index}_{safe}"[:64]
+
+    @staticmethod
+    def _parse_mcp_response_body(body, content_type=""):
+        text = body.decode("utf-8", errors="replace").strip()
+        if not text:
+            return {}
+        if "text/event-stream" in (content_type or "") or text.startswith(("event:", "data:")):
+            data_lines = []
+            for line in text.splitlines():
+                if line.startswith("data:"):
+                    value = line[5:].strip()
+                    if value and value != "[DONE]":
+                        data_lines.append(value)
+            for value in data_lines:
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    continue
+            return {"error": {"message": text[:1000]}}
+        return json.loads(text)
+
+    @staticmethod
+    def _mcp_result_text(result):
+        content = result.get("content") if isinstance(result, dict) else None
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "text":
+                    parts.append(str(item.get("text", "")))
+                elif item.get("type"):
+                    parts.append(json.dumps(item, ensure_ascii=False))
+            if parts:
+                return "\n".join(part for part in parts if part)
+        return json.dumps(result, ensure_ascii=False)
+
+    def _mcp_request(self, method, params=None, request_id=None):
+        config = self.store.mcp_config()
+        url = (config.get("url") or "").strip()
+        headers = config.get("headers") or {}
+        if not url or not headers.get("x-api-key"):
+            raise RuntimeError("MCP 未配置，请设置 HROBOT_MCP_URL 和 HROBOT_MCP_API_KEY，或填写 data/mcp_config.json。")
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        if request_id is not None:
+            payload["id"] = request_id
+        request_headers = {
+            **headers,
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        session_id = getattr(self, "_mcp_session_id", "")
+        if session_id:
+            request_headers["mcp-session-id"] = session_id
+        request = Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=request_headers,
+            method="POST",
+        )
+        with urlopen(request, timeout=120) as response:
+            response_session_id = response.headers.get("mcp-session-id")
+            if response_session_id:
+                self._mcp_session_id = response_session_id
+            data = self._parse_mcp_response_body(response.read(), response.headers.get("Content-Type", ""))
+        if isinstance(data, dict) and data.get("error"):
+            error = data["error"]
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise RuntimeError(message or "MCP 请求失败")
+        return data.get("result", data) if isinstance(data, dict) else data
+
+    def _mcp_initialize(self):
+        if getattr(self, "_mcp_initialized", False):
+            return
+        self._mcp_request(
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "HRobot Web AI Chat", "version": "1.0"},
+            },
+            request_id=1,
+        )
+        try:
+            self._mcp_request("notifications/initialized", request_id=None)
+        except Exception:
+            pass
+        self._mcp_initialized = True
+
+    def _mcp_tools_for_ai(self):
+        try:
+            self._mcp_initialize()
+            result = self._mcp_request("tools/list", {}, request_id=2)
+        except Exception as error:
+            _agent_debug_log(
+                "server.py:_mcp_tools_for_ai",
+                "MCP tools/list failed",
+                {"errorType": type(error).__name__, "error": str(error)},
+                "MCP1",
+            )
+            return [], {}
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        ai_tools = []
+        tool_map = {}
+        for index, tool in enumerate(tools[:32], start=1):
+            if not isinstance(tool, dict) or not tool.get("name"):
+                continue
+            ai_name = self._safe_tool_name(index, tool.get("name"))
+            schema = tool.get("inputSchema") if isinstance(tool.get("inputSchema"), dict) else {"type": "object", "properties": {}}
+            ai_tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": ai_name,
+                        "description": tool.get("description") or f"HRobot MCP tool: {tool.get('name')}",
+                        "parameters": schema,
+                    },
+                }
+            )
+            tool_map[ai_name] = tool.get("name")
+        return ai_tools, tool_map
+
+    def _mcp_call_tool(self, name, arguments):
+        self._mcp_initialize()
+        result = self._mcp_request(
+            "tools/call",
+            {
+                "name": name,
+                "arguments": arguments if isinstance(arguments, dict) else {},
+            },
+            request_id=int(time.time() * 1000) % 1000000000,
+        )
+        return self._mcp_result_text(result if isinstance(result, dict) else {"result": result})
+
+    @staticmethod
+    def _extract_profile_names_from_text(text):
+        text = str(text or "")
+        blocked = {
+            "最近", "一次", "晋升", "时间", "任职", "记录", "绩效", "结果", "季度", "个人",
+            "档案", "信息", "查询", "查看", "分析", "当前", "系统", "数据", "人才", "盘点",
+        }
+        candidates = []
+        patterns = [
+            r"([\u4e00-\u9fff]{2,4})的(?:个人档案|档案|任职|履历|绩效|晋升|人才|盘点|最近)",
+            r"([\u4e00-\u9fff]{2,4})(?:近|最近|过去|本年|今年|去年)\S{0,12}(?:绩效|任职|履历|晋升|档案|盘点)",
+            r"(?:查一下|查询|查看|看看|看一下|分析|关于)\s*([\u4e00-\u9fff]{2,4})",
+            r"员工档案[：:]\s*([\u4e00-\u9fff]{2,4})",
+            r"姓名[：:]\s*([\u4e00-\u9fff]{2,4})",
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, text):
+                name = match.group(1).strip().rstrip("的")
+                if name and name not in blocked and not any(word in name for word in blocked):
+                    candidates.append(name)
+        return list(dict.fromkeys(candidates))[:3]
+
+    def _mcp_profile_context_for_question(self, question, history):
+        related_terms = ("档案", "任职", "履历", "绩效", "季度", "晋升", "职级", "部门", "人才盘点", "九宫格")
+        question_text = str(question or "")
+        history_text = "\n".join(str(item.get("content", "")) for item in (history or [])[-4:] if isinstance(item, dict))
+        if not any(term in question_text for term in related_terms):
+            return ""
+        names = self._extract_profile_names_from_text(question_text) or self._extract_profile_names_from_text(history_text)
+        if not names:
+            return ""
+        chunks = []
+        for name in names:
+            try:
+                result = self._mcp_call_tool("talent-profile-search", {"names": [name]})
+                chunks.append(f"## MCP 人才档案查询：{name}\n{result}")
+            except Exception as error:
+                chunks.append(f"## MCP 人才档案查询：{name}\nMCP 查询失败：{error}")
+                _agent_debug_log(
+                    "server.py:_mcp_profile_context_for_question",
+                    "MCP profile prefetch failed",
+                    {"name": name, "errorType": type(error).__name__, "error": str(error)},
+                    "MCP3",
+                )
+        context = "\n\n".join(chunks)
+        if len(context) > 120000:
+            context = context[:120000] + "\n...MCP 查询结果过长，后续内容已截断。"
+        return context
+
+    @staticmethod
+    def _extract_talent_search_arguments(text):
+        text = str(text or "").strip()
+        arguments = {}
+        work_ids = []
+        for pattern in (r"(?:工号|员工工号|workId|employeeId)[：:\s]*([0-9]{1,12})", r"\b([0-9]{3,12})\b"):
+            for match in re.finditer(pattern, text, re.I):
+                work_ids.append(match.group(1))
+        if work_ids:
+            arguments["workIds"] = list(dict.fromkeys(work_ids))[:5]
+
+        names = Handler._extract_profile_names_from_text(text)
+        if names:
+            arguments["names"] = names
+
+        dept_matches = []
+        dept_pattern = r"([\u4e00-\u9fffA-Za-z0-9_/·（）()]{2,32}(?:中心|工作室|项目组|项目部|事业部|技术部|运营部|美术部|行政部|部门|部))"
+        for match in re.finditer(dept_pattern, text):
+            value = match.group(1).strip(" ，,。；;：:")
+            if value and value not in {"部门", "二级部门"} and not any(token in value for token in ("哪个", "哪些", "所有", "多少")):
+                dept_matches.append(value)
+        if dept_matches and not names:
+            arguments["deptPaths"] = list(dict.fromkeys(dept_matches))[:5]
+
+        level_match = re.search(r"\b([PMT][_-]?\d+(?:-\d+)?)\b", text, re.I)
+        if level_match:
+            arguments["jobLevel"] = level_match.group(1).replace("_", "").upper()
+            arguments["jobLevelOperator"] = "EQ"
+
+        if "在职" in text and "离职" not in text:
+            arguments["onJob"] = True
+        elif "离职" in text:
+            arguments["onJob"] = False
+        return arguments
+
+    def _forced_mcp_talent_search(self, query, history=None):
+        history_text = "\n".join(str(item.get("content", "")) for item in (history or [])[-4:] if isinstance(item, dict))
+        arguments = self._extract_talent_search_arguments(query)
+        if not arguments:
+            arguments = self._extract_talent_search_arguments(history_text)
+        if not arguments:
+            return {
+                "error": "请在输入框里写清楚要检索的姓名、工号或部门，例如：江晓伟近四个季度绩效，或 工号 2219。",
+            }
+        try:
+            result = self._mcp_call_tool("talent-profile-search", arguments)
+        except Exception as error:
+            _agent_debug_log(
+                "server.py:_forced_mcp_talent_search",
+                "MCP forced talent search failed",
+                {"arguments": arguments, "errorType": type(error).__name__, "error": str(error)},
+                "MCP4",
+            )
+            return {"error": f"MCP 人才检索失败：{error}", "arguments": arguments}
+        if len(result) > 120000:
+            result = result[:120000] + "\n...MCP 返回内容过长，后续内容已截断。"
+        return {
+            "message": result or "MCP 未返回内容。",
+            "arguments": arguments,
+        }
+
+    @staticmethod
     def _image_request_payload(model, prompt, size):
         return {
             "model": model,
@@ -2294,7 +2642,7 @@ class Handler(SimpleHTTPRequestHandler):
             "n": 1,
         }
 
-    def _call_ai_model(self, messages):
+    def _call_ai_model(self, messages, enable_mcp=False):
         config = self.store.ai_config()["multimodal"]
         if not (config.get("apiKey") and config.get("baseUrl") and config.get("model")):
             return {
@@ -2303,27 +2651,97 @@ class Handler(SimpleHTTPRequestHandler):
             }
 
         endpoint = config["baseUrl"].rstrip("/") + "/chat/completions"
-        payload = self._ai_request_payload(config["model"], messages)
-        request = Request(
-            endpoint,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {config['apiKey']}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=300) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            return {"configured": True, "error": f"模型接口返回 {error.code}: {detail}"}
-        except URLError as error:
-            return {"configured": True, "error": f"无法连接模型接口: {error.reason}"}
+        tools, tool_map = self._mcp_tools_for_ai() if enable_mcp else ([], {})
+        if tools:
+            messages = [
+                *messages[:-1],
+                {
+                    "role": "system",
+                    "content": "当用户问题需要查询实时 HR 数据、通讯录、部门或人才档案时，优先调用可用的 HRobot MCP 工具；工具结果为空或报错时，请明确说明限制。",
+                },
+                messages[-1],
+            ]
+        for _ in range(4):
+            payload = self._ai_request_payload_with_tools(config["model"], messages, tools)
+            try:
+                request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            except (TypeError, UnicodeEncodeError) as error:
+                _agent_debug_log(
+                    "server.py:_call_ai_model",
+                    "AI payload json.dumps failed",
+                    {"errorType": type(error).__name__, "error": str(error)},
+                    "H3",
+                )
+                return {"configured": True, "error": f"AI 请求序列化失败: {error}"}
+            request = Request(
+                endpoint,
+                data=request_body,
+                headers={
+                    "Authorization": f"Bearer {config['apiKey']}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=300) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+            except HTTPError as error:
+                detail = error.read().decode("utf-8", errors="replace")
+                _agent_debug_log(
+                    "server.py:_call_ai_model",
+                    "AI HTTPError",
+                    {"code": error.code, "detailPreview": detail[:500]},
+                    "H4",
+                )
+                return {"configured": True, "error": f"模型接口返回 {error.code}: {detail}"}
+            except URLError as error:
+                _agent_debug_log(
+                    "server.py:_call_ai_model",
+                    "AI URLError",
+                    {"reason": str(error.reason)},
+                    "H4",
+                )
+                return {"configured": True, "error": f"无法连接模型接口: {error.reason}"}
 
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        return {"configured": True, "message": content or "模型未返回内容。", "raw": data}
+            message = data.get("choices", [{}])[0].get("message", {})
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                content = message.get("content", "")
+                return {"configured": True, "message": content or "模型未返回内容。", "raw": data}
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message.get("content") or "",
+                    "tool_calls": tool_calls,
+                }
+            )
+            for tool_call in tool_calls:
+                function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+                ai_tool_name = function.get("name", "")
+                mcp_tool_name = tool_map.get(ai_tool_name)
+                try:
+                    arguments = json.loads(function.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    arguments = {}
+                try:
+                    result_text = self._mcp_call_tool(mcp_tool_name, arguments) if mcp_tool_name else f"未知工具：{ai_tool_name}"
+                except Exception as error:
+                    result_text = f"MCP 工具调用失败：{error}"
+                    _agent_debug_log(
+                        "server.py:_call_ai_model",
+                        "MCP tools/call failed",
+                        {"tool": mcp_tool_name, "errorType": type(error).__name__, "error": str(error)},
+                        "MCP2",
+                    )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.get("id", ""),
+                        "name": ai_tool_name,
+                        "content": result_text[:120000],
+                    }
+                )
+        return {"configured": True, "message": "模型连续调用工具但未生成最终回复，请缩小问题范围后重试。"}
 
     def _call_image_model(self, prompt, size="1024x1024"):
         config = self.store.ai_config()["image"]
@@ -2394,13 +2812,25 @@ class Handler(SimpleHTTPRequestHandler):
         messages.append({"role": "user", "content": question})
         return messages
 
-    def _build_report_messages(self, instruction, department=None, report_type=None):
+    def _build_report_messages(self, instruction, department=None, report_type=None, selected_assets=None):
         context = self.store.analysis_context(department=department)
         context_text = json.dumps(context, ensure_ascii=False)
         if len(context_text) > 100000:
             context_text = context_text[:100000] + "\n...内容过长，后续数据已截断。"
         preset = REPORT_PRESETS.get(report_type or "") or REPORT_PRESETS["talent-review"]
-        assets_text = json.dumps(self.store.report_asset_context(report_type), ensure_ascii=False)
+        target_name = self.store._extract_360_report_person_name("", instruction) if report_type == "360" else ""
+        selected_assets = selected_assets if isinstance(selected_assets, dict) else None
+        selected_skills = selected_assets.get("skills", []) if selected_assets is not None else None
+        selected_materials = selected_assets.get("materials", []) if selected_assets is not None else None
+        assets_text = json.dumps(
+            self.store.report_asset_context(
+                report_type,
+                target_name=target_name,
+                selected_skills=selected_skills,
+                selected_materials=selected_materials,
+            ),
+            ensure_ascii=False,
+        )
         if len(assets_text) > 80000:
             assets_text = assets_text[:80000] + "\n...内容过长，后续材料已截断。"
         system = (
@@ -2410,6 +2840,8 @@ class Handler(SimpleHTTPRequestHandler):
         )
         if department:
             system += f"\n请只分析部门或组织范围：{department}，不要扩展到无关人员。"
+        if report_type == "360" and target_name:
+            system += f"\n本次 360 报告对象为：{target_name}。只使用该对象的 360 材料生成报告；如已有标准版与核心版即可生成，不要求必须存在详细版。"
         user_instruction = instruction or f"请生成一份{preset['name']}，优先使用已导入的 skill 和材料，并结合 2026 人才盘点数据。"
         markdown_instruction = (
             "输出格式要求：只返回 Markdown 正文，不要返回 HTML，不要把内容放进代码块。"
@@ -2480,6 +2912,21 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/server/status":
             self._send_json(server_status_payload())
+            return
+        if path == "/api/app/update":
+            try:
+                self._send_json(self.store.update_status(self.store._first_query_value(query, "sourcePath")))
+            except Exception as error:
+                self._send_json(
+                    {
+                        "app": app_version_payload(),
+                        "config": self.store.update_config(),
+                        "configured": bool(self.store.update_config().get("sourcePath")),
+                        "updateAvailable": False,
+                        "error": str(error),
+                    },
+                    status=400,
+                )
             return
         if path == "/api/home-memos":
             self._send_json(self.store.home_memos())
@@ -2632,7 +3079,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "请上传独立 Web 项目 zip。"}, status=400)
                 return
             try:
-                self._send_json(self.store.import_agent_project_zip(filename, content))
+                self._send_json(self.store.import_agent_project_zip(filename, content, ai_provider=self._call_ai_model))
             except Exception as error:
                 self._send_json({"error": str(error)}, status=400)
             return
@@ -2652,6 +3099,29 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({**status, "restarting": True, "message": "服务器正在重启，请稍候刷新状态。"})
             schedule_server_restart()
             return
+        if path == "/api/app/update/config":
+            self._send_json({"config": self.store.save_update_config(payload), "app": app_version_payload()})
+            return
+        if path == "/api/app/update/check":
+            try:
+                self._send_json(self.store.update_status(payload.get("sourcePath") or ""))
+            except Exception as error:
+                self._send_json(
+                    {
+                        "app": app_version_payload(),
+                        "config": self.store.update_config(),
+                        "updateAvailable": False,
+                        "error": str(error),
+                    },
+                    status=400,
+                )
+            return
+        if path == "/api/app/update/install":
+            try:
+                self._send_json(self.store.install_update(payload.get("sourcePath") or ""))
+            except Exception as error:
+                self._send_json({"error": str(error), "app": app_version_payload(), "config": self.store.update_config()}, status=400)
+            return
         if path == "/api/home-memos":
             self._send_json(self.store.save_home_memo(payload.get("date", ""), payload.get("text", "")))
             return
@@ -2670,6 +3140,16 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/agent-projects/delete":
             try:
                 self._send_json(self.store.delete_agent_project(payload.get("id", "")))
+            except FileNotFoundError as error:
+                self._send_json({"error": str(error)}, status=404)
+            except ValueError as error:
+                self._send_json({"error": str(error)}, status=400)
+            except Exception as error:
+                self._send_json({"error": str(error)}, status=500)
+            return
+        if path == "/api/agent-projects/analyze":
+            try:
+                self._send_json(self.store.analyze_agent_project(payload.get("id", ""), ai_provider=self._call_ai_model, force_ai=bool(payload.get("forceAi", True))))
             except FileNotFoundError as error:
                 self._send_json({"error": str(error)}, status=404)
             except ValueError as error:
@@ -2698,8 +3178,30 @@ class Handler(SimpleHTTPRequestHandler):
             if not question:
                 self._send_json({"error": "请输入问题。"}, status=400)
                 return
-            messages = self._build_ai_messages(question, payload.get("history", []))
-            self._send_json(self._call_ai_model(messages))
+            history = payload.get("history", [])
+            messages = self._build_ai_messages(question, history)
+            mcp_context = self._mcp_profile_context_for_question(question, history)
+            if mcp_context:
+                messages.insert(
+                    -1,
+                    {
+                        "role": "system",
+                        "content": (
+                            "以下是 HRobot MCP 实时查询结果。回答涉及该员工档案、任职、晋升、绩效、盘点等问题时，"
+                            "必须优先依据这段 MCP 结果；不要因为本地九宫格上下文缺字段就判断查不到。\n\n"
+                            f"{mcp_context}"
+                        ),
+                    },
+                )
+            self._send_json(self._call_ai_model(messages, enable_mcp=True))
+            return
+        if path == "/api/mcp/talent-search":
+            query = (payload.get("message") or payload.get("query") or "").strip()
+            if not query:
+                self._send_json({"error": "请输入要检索的姓名、工号或部门。"}, status=400)
+                return
+            result = self._forced_mcp_talent_search(query, payload.get("history", []))
+            self._send_json(result, status=502 if result.get("error") else 200)
             return
         if path == "/api/ai/image/test":
             prompt = (payload.get("prompt") or "HRobot orange simple poster test").strip()
@@ -2753,11 +3255,26 @@ class Handler(SimpleHTTPRequestHandler):
             instruction = (payload.get("instruction") or "").strip()
             department = (payload.get("department") or "").strip() or None
             report_type = (payload.get("reportType") or "talent-review").strip()
+            selected_assets = payload.get("selectedAssets")
+            if selected_assets is not None and not isinstance(selected_assets, dict):
+                self._send_json({"error": "所选报告资料格式不正确。"}, status=400)
+                return
+            if selected_assets is not None and any(
+                not isinstance(selected_assets.get(key, []), list)
+                for key in ("skills", "materials")
+            ):
+                self._send_json({"error": "所选报告资料清单格式不正确。"}, status=400)
+                return
             if report_type not in REPORT_PRESETS:
                 report_type = "talent-review"
             import traceback as tb
             try:
-                msgs = self._build_report_messages(instruction, department=department, report_type=report_type)
+                msgs = self._build_report_messages(
+                    instruction,
+                    department=department,
+                    report_type=report_type,
+                    selected_assets=selected_assets,
+                )
                 result = self._call_ai_model(msgs)
                 if result.get("message"):
                     message = result["message"]
@@ -2826,7 +3343,7 @@ def main():
     SERVER_ALLOW_REMOTE_CLIENTS = args.allow_remote_clients
     Handler.allow_remote_clients = args.allow_remote_clients
     start_intelligence_scheduler(Handler.store)
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server = ReusableThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Talent nine-box app running at http://{args.host}:{args.port}/index.html")
     if args.host not in {"127.0.0.1", "localhost", "::1"} and not args.allow_remote_clients:
         print("Remote clients are blocked by default. Add --allow-remote-clients only on a trusted network.")

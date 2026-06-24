@@ -9,6 +9,7 @@
 - 前端交互入口为 `static/js/app.js`。
 - 人才盘点前端模块入口为 `static/modules/talent-review/talent-review.js`，当前承接九宫格、筛选、人才池、员工详情侧栏、档案匹配摘要、校准调整、导入导出等前端函数。
 - 人才盘点后端模块入口为 `app/modules/talent_review/store.py`，当前通过 `TalentReviewStoreMixin` 接入 `DataStore`，承接人员合并、档案匹配、花名册/盘点导入、校准保存、人才池和校准导出等后端函数。
+- Agent 中心后端模块入口为 `app/modules/agent_center/store.py`，当前通过 `AgentCenterStoreMixin` 接入 `DataStore`，承接项目上传解压、结构分析、运行环境判断、项目进程管理和删除清理。
 - 后续新增样式和脚本不得重新写回 `index.html`。
 
 ## 目标模块边界

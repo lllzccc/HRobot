@@ -2,36 +2,54 @@
 param(
   [switch]$IncludeHrData,
   [int]$Port = 8767,
-  [string]$AppName = "HRobotTalentNineBox",
-  [string]$DisplayName = "HRobot Talent NineBox"
+  [string]$AppName = "Hrobot",
+  [string]$DisplayName = "Hrobot",
+  [string]$Version = "0.1.0"
 )
 
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$ReleaseRoot = Join-Path $Root "packages\windows"
-$BuildRoot = Join-Path $Root "build\windows"
+$PackageRootBase = Join-Path (Split-Path $Root -Parent) "HRobot package"
+$ReleaseRoot = Join-Path $PackageRootBase "windows\$Version"
+$BuildBase = Join-Path $PackageRootBase ".build-temp"
+$BuildRoot = Join-Path $BuildBase "windows\$Version-$PID"
 $PyInstallerWork = Join-Path $BuildRoot "pyinstaller"
-$AppDistRoot = Join-Path $ReleaseRoot "dist"
-$PackageRoot = Join-Path $ReleaseRoot "package"
+$AppDistRoot = Join-Path $BuildRoot "dist"
+$PackageRoot = Join-Path $BuildRoot "package"
 $AppPackageDir = Join-Path $PackageRoot "app"
 $PayloadZip = Join-Path $BuildRoot "payload.zip"
 $InstallerSource = Join-Path $BuildRoot "windows_installer.py"
-$InstallerDist = Join-Path $ReleaseRoot "installer_dist"
-$InstallerExe = Join-Path $ReleaseRoot "$($AppName)Setup.exe"
+$InstallerDist = Join-Path $BuildRoot "installer_dist"
+$InstallerFileName = "hrobot-win-$Version.exe"
+$BuiltInstallerExe = Join-Path $BuildRoot $InstallerFileName
+$PortableDir = Join-Path $ReleaseRoot "portable"
+$InstallerExe = Join-Path $ReleaseRoot $InstallerFileName
+$ReleaseManifest = Join-Path $ReleaseRoot "release.json"
 
-function Assert-ProjectChild {
-  param([string]$Path)
+trap {
+  if ($BuildRoot -and (Test-Path -LiteralPath $BuildRoot)) {
+    $buildFull = [System.IO.Path]::GetFullPath($BuildRoot)
+    $buildBaseFull = [System.IO.Path]::GetFullPath($BuildBase).TrimEnd('\') + '\'
+    if ($buildFull.StartsWith($buildBaseFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+      Remove-Item -LiteralPath $BuildRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+  throw $_
+}
+
+function Assert-PathUnder {
+  param([string]$Path, [string]$Parent, [string]$Label)
   $full = [System.IO.Path]::GetFullPath($Path)
-  $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
-  if (-not $full.StartsWith($rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing to modify path outside project: $full"
+  $parentFull = [System.IO.Path]::GetFullPath($Parent).TrimEnd('\') + '\'
+  if (-not $full.StartsWith($parentFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to modify path outside $Label root: $full"
   }
 }
 
 function Reset-Dir {
-  param([string]$Path)
-  Assert-ProjectChild $Path
+  param([string]$Path, [string]$Parent, [string]$Label)
+  Assert-PathUnder $Path $Parent $Label
   if (Test-Path $Path) {
     Remove-Item -LiteralPath $Path -Recurse -Force
   }
@@ -60,8 +78,37 @@ function Invoke-Checked {
   }
 }
 
+function Assert-RequiredPackageFiles {
+  param([string]$Path)
+  $required = @(
+    "$AppName.exe",
+    "index.html",
+    "app_version.json",
+    "app\__init__.py",
+    "app\modules\agent_center\store.py",
+    "app\modules\talent_review\store.py",
+    "static\css\app.css",
+    "static\js\app.js",
+    "static\modules\talent-review\talent-review.js",
+    "assets\fonts\harmonyos-sans-sc\harmonyos-sans-sc.css"
+  )
+  $missing = @()
+  foreach ($item in $required) {
+    if (-not (Test-Path (Join-Path $Path $item))) {
+      $missing += $item
+    }
+  }
+  if ($missing.Count -gt 0) {
+    throw "Package is missing required files: $($missing -join ', ')"
+  }
+}
+
 Set-Location $Root
-New-Item -ItemType Directory -Force -Path $ReleaseRoot, $BuildRoot, $PyInstallerWork | Out-Null
+New-Item -ItemType Directory -Force -Path $PackageRootBase, $BuildRoot, $PyInstallerWork | Out-Null
+
+if ($IncludeHrData) {
+  throw "Hrobot release packages are code-only. Do not bundle HR data, user settings, uploads, generated outputs, or local secrets."
+}
 
 Write-Host "Installing packaging dependencies..."
 Invoke-Checked "python" @("-m", "pip", "install", "-r", "requirements.txt")
@@ -87,28 +134,25 @@ Invoke-Checked "python" @(
   "server.py"
 )
 
-Reset-Dir $PackageRoot
+Reset-Dir $PackageRoot $BuildRoot "temporary build"
 Copy-Tree (Join-Path $AppDistRoot $AppName) $AppPackageDir
 
 Write-Host "Copying web assets and runtime folders..."
 Copy-Item -LiteralPath (Join-Path $Root "index.html") -Destination (Join-Path $AppPackageDir "index.html") -Force
+@{
+  name = $DisplayName
+  version = $Version
+} | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $AppPackageDir "app_version.json") -Encoding UTF8
 Copy-Tree (Join-Path $Root "assets") (Join-Path $AppPackageDir "assets")
+Copy-Tree (Join-Path $Root "app") (Join-Path $AppPackageDir "app")
+Copy-Tree (Join-Path $Root "static") (Join-Path $AppPackageDir "static")
 Copy-Tree (Join-Path $Root "scripts") (Join-Path $AppPackageDir "scripts")
 
 $DataTarget = Join-Path $AppPackageDir "data"
 New-Item -ItemType Directory -Force -Path $DataTarget | Out-Null
 
-if ($IncludeHrData) {
-  Write-Host "Including HR data. Local caches/uploads/backups are excluded."
-  $excludeDirs = @("backups", "exports", "uploads", "__pycache__")
-  $excludeFiles = @("intelligence_update_status.json")
-  robocopy (Join-Path $Root "data") $DataTarget /E /XD $excludeDirs /XF $excludeFiles | Out-Null
-  $code = $LASTEXITCODE
-  if ($code -gt 7) {
-    throw "robocopy failed with exit code $code"
-  }
-} else {
-  Write-Host "Creating data skeleton only. Run with -IncludeHrData to bundle current HR data."
+if (-not $IncludeHrData) {
+  Write-Host "Creating data skeleton only. User data, settings, uploads, generated outputs, and secrets are never bundled."
   $dirs = @(
     "review_results",
     "talent_profiles",
@@ -212,6 +256,8 @@ echo Removed watchdog task: $WatchdogTaskName
 pause
 "@
 $UnregisterBat | Set-Content -Path (Join-Path $AppPackageDir "Unregister-Autostart.bat") -Encoding ASCII
+
+Assert-RequiredPackageFiles $AppPackageDir
 
 Write-Host "Creating installer payload..."
 if (Test-Path $PayloadZip) {
@@ -321,7 +367,7 @@ if __name__ == "__main__":
 $InstallerPython | Set-Content -Path $InstallerSource -Encoding UTF8
 
 Write-Host "Building single-file installer..."
-Reset-Dir $InstallerDist
+Reset-Dir $InstallerDist $BuildRoot "temporary build"
 Invoke-Checked "python" @(
   "-m", "PyInstaller",
   "--noconfirm",
@@ -336,12 +382,33 @@ Invoke-Checked "python" @(
   $InstallerSource
 )
 
-Copy-Item -LiteralPath (Join-Path $InstallerDist "$($AppName)Setup.exe") -Destination $InstallerExe -Force
+Copy-Item -LiteralPath (Join-Path $InstallerDist "$($AppName)Setup.exe") -Destination $BuiltInstallerExe -Force
+
+$releasePayload = [ordered]@{
+  app = $DisplayName
+  version = $Version
+  installer = $InstallerFileName
+  publishedAt = (Get-Date).ToString("s")
+  notes = "Hrobot $Version"
+}
+$builtReleaseManifest = Join-Path $BuildRoot "release.json"
+$releasePayload | ConvertTo-Json -Depth 5 | Set-Content -Path $builtReleaseManifest -Encoding UTF8
+
+Write-Host "Publishing versioned Windows release..."
+Reset-Dir $ReleaseRoot (Join-Path $PackageRootBase "windows") "Windows package"
+Copy-Item -LiteralPath $BuiltInstallerExe -Destination $InstallerExe -Force
+Copy-Item -LiteralPath $builtReleaseManifest -Destination $ReleaseManifest -Force
+Copy-Tree $AppPackageDir $PortableDir
+
+Assert-PathUnder $BuildRoot $BuildBase "temporary build"
+Remove-Item -LiteralPath $BuildRoot -Recurse -Force
+if ((Test-Path -LiteralPath $BuildBase) -and -not (Get-ChildItem -LiteralPath $BuildBase -Recurse -File -Force | Select-Object -First 1)) {
+  Remove-Item -LiteralPath $BuildBase -Recurse -Force
+}
 
 Write-Host ""
 Write-Host "Done."
 Write-Host "Installer: $InstallerExe"
-Write-Host "Portable app folder: $AppPackageDir"
-if (-not $IncludeHrData) {
-  Write-Host "Note: HR data was not bundled. Re-run with -IncludeHrData if you intentionally want to include current data."
-}
+Write-Host "Release manifest: $ReleaseManifest"
+Write-Host "Portable app folder: $PortableDir"
+Write-Host "Note: this is a code-only release. User data, settings, uploads, generated outputs, and local secrets were not bundled."

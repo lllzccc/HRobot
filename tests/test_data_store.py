@@ -4,12 +4,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.request import urlopen
 from zipfile import ZipFile
 
 from openpyxl import Workbook, load_workbook
 
-from server import DataStore, Handler
+from server import DataStore, Handler, is_newer_version
 
 
 class DataStoreTests(unittest.TestCase):
@@ -170,6 +171,91 @@ class DataStoreTests(unittest.TestCase):
         people = store.people()
 
         self.assertEqual(people[1]["gridCurrent"], 9)
+
+    def test_version_compare_handles_semver_values(self):
+        self.assertTrue(is_newer_version("0.1.1", "0.1.0"))
+        self.assertTrue(is_newer_version("v0.2.0", "0.1.9"))
+        self.assertFalse(is_newer_version("0.1.0", "0.1.0"))
+        self.assertFalse(is_newer_version("0.1.0", "0.1.1"))
+
+    def test_update_config_is_local_user_setting(self):
+        store = DataStore(self.data_dir)
+
+        payload = store.save_update_config({"sourcePath": r"D:\WeCom\HROBOT-release"})
+
+        self.assertEqual(payload["sourcePath"], r"D:\WeCom\HROBOT-release")
+        saved = json.loads((self.data_dir / "update_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["sourcePath"], r"D:\WeCom\HROBOT-release")
+
+    def test_update_status_reads_shared_drive_release_manifest(self):
+        release_dir = self.data_dir / "shared-release"
+        release_dir.mkdir()
+        (release_dir / "HrobotSetup.exe").write_bytes(b"stub")
+        (release_dir / "release.json").write_text(
+            json.dumps(
+                {
+                    "app": "Hrobot",
+                    "version": "9.9.9",
+                    "installer": "HrobotSetup.exe",
+                    "notes": "Test release",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        store = DataStore(self.data_dir)
+        store.save_update_config({"sourcePath": str(release_dir)})
+
+        status = store.update_status()
+
+        self.assertTrue(status["updateAvailable"])
+        self.assertEqual(status["latest"]["installer"], "HrobotSetup.exe")
+        self.assertEqual(status["latest"]["notes"], "Test release")
+
+    def test_update_status_reads_release_manifest_url(self):
+        class FakeResponse:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, *_args):
+                return json.dumps(
+                    {
+                        "version": "9.9.9",
+                        "installer": "HrobotSetup.exe",
+                        "notes": "URL release",
+                    }
+                ).encode("utf-8")
+
+        store = DataStore(self.data_dir)
+        with patch("server.urlopen", return_value=FakeResponse()):
+            status = store.update_status("https://example.com/hrobot/release.json")
+
+        self.assertTrue(status["updateAvailable"])
+        self.assertEqual(status["sourceType"], "url")
+        self.assertEqual(status["latest"]["installerPath"], "https://example.com/hrobot/HrobotSetup.exe")
+
+    def test_update_status_rejects_html_share_page_url(self):
+        class FakeHtmlResponse:
+            headers = {"Content-Type": "text/html"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, *_args):
+                return b"<!DOCTYPE html><html></html>"
+
+        store = DataStore(self.data_dir)
+        with patch("server.urlopen", return_value=FakeHtmlResponse()):
+            with self.assertRaisesRegex(ValueError, "release.json"):
+                store.update_status("https://drive.weixin.qq.com/s?k=test")
 
     def test_review_results_prefer_review_result_folder(self):
         source_dir = self.data_dir / "review_results"
@@ -343,10 +429,99 @@ class DataStoreTests(unittest.TestCase):
         self.assertTrue(project["entryUrl"].endswith("/demo/index.html"))
         self.assertEqual(project["runtime"], "static-web")
         self.assertEqual(project["serverEntry"], "")
+        self.assertEqual(project["analysis"]["runtime"], "static-web")
+        self.assertGreaterEqual(project["analysis"]["confidence"], 0.7)
+        self.assertTrue(project["environment"]["canOpen"])
+        self.assertEqual(project["environment"]["label"], "无需运行时")
         self.assertEqual(project["fileCount"], 3)
         self.assertEqual(listed["count"], 1)
+        self.assertTrue(listed["projects"][0]["environment"]["canOpen"])
         self.assertTrue((self.data_dir / "agent_center" / "manifest.json").exists())
         self.assertFalse((self.data_dir / "agent_center" / "zips" / project["sourceZip"]).exists())
+
+    def test_agent_center_detects_vite_project_and_requires_dependencies(self):
+        store = DataStore(self.data_dir)
+        zip_path = self.data_dir / "vite-agent.zip"
+        with ZipFile(zip_path, "w") as archive:
+            archive.writestr("web/index.html", "<!doctype html><title>Vite Agent</title><div id='root'></div>")
+            archive.writestr(
+                "web/package.json",
+                json.dumps(
+                    {
+                        "scripts": {"dev": "vite"},
+                        "dependencies": {"@vitejs/plugin-react": "latest"},
+                        "devDependencies": {"vite": "latest"},
+                    }
+                ),
+            )
+            archive.writestr("web/src/main.js", "console.log('vite')")
+
+        project = store.import_agent_project_zip("vite-agent.zip", zip_path.read_bytes())["project"]
+
+        self.assertEqual(project["runtime"], "node-vite")
+        self.assertEqual(project["analysis"]["startCwd"], "web")
+        self.assertIn("npm run dev", project["analysis"]["startCommand"])
+        self.assertTrue(project["analysis"]["requiresInstall"])
+        self.assertFalse(project["environment"]["canOpen"])
+        self.assertIn(project["environment"]["label"], {"缺 Node.js", "依赖未安装"})
+
+    def test_agent_center_blocks_node_project_when_runtime_missing(self):
+        store = DataStore(self.data_dir)
+        zip_path = self.data_dir / "node-ready-agent.zip"
+        with ZipFile(zip_path, "w") as archive:
+            archive.writestr("web/index.html", "<!doctype html><title>Node Ready Agent</title><div id='root'></div>")
+            archive.writestr(
+                "web/package.json",
+                json.dumps({"scripts": {"dev": "vite"}, "devDependencies": {"vite": "latest"}}),
+            )
+            archive.writestr("web/node_modules/.package-lock.json", "{}")
+
+        with patch.object(DataStore, "_portable_runtime_path", return_value=""), patch(
+            "app.modules.agent_center.store.shutil.which",
+            return_value=None,
+        ):
+            project = store.import_agent_project_zip("node-ready-agent.zip", zip_path.read_bytes())["project"]
+            with self.assertRaisesRegex(ValueError, "Node"):
+                store.open_agent_project(project["id"])
+
+        self.assertEqual(project["runtime"], "node-vite")
+        self.assertFalse(project["analysis"]["requiresInstall"])
+        self.assertFalse(project["environment"]["canOpen"])
+        self.assertEqual(project["environment"]["label"], "缺 Node.js")
+
+    def test_agent_center_uses_ai_fallback_for_uncertain_node_project(self):
+        store = DataStore(self.data_dir)
+        zip_path = self.data_dir / "uncertain-agent.zip"
+        with ZipFile(zip_path, "w") as archive:
+            archive.writestr("client/index.html", "<!doctype html><title>Hybrid Agent</title>")
+            archive.writestr("client/package.json", json.dumps({"scripts": {"start": "node server.js"}}))
+            archive.writestr("client/server.js", "console.log('server')")
+
+        def fake_ai(messages):
+            return {
+                "configured": True,
+                "message": json.dumps(
+                    {
+                        "runtime": "node-server",
+                        "entry": "client/index.html",
+                        "startCwd": "client",
+                        "startCommand": "npm run start",
+                        "requiresInstall": True,
+                        "confidence": 0.9,
+                        "description": "AI 判断为前后端混合 Node Web 功能。",
+                        "reason": "package.json 的 start 脚本指向 server.js。",
+                        "flags": ["需要确认依赖安装。"],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+
+        project = store.import_agent_project_zip("uncertain-agent.zip", zip_path.read_bytes(), ai_provider=fake_ai)["project"]
+
+        self.assertEqual(project["runtime"], "node-server")
+        self.assertEqual(project["analysis"]["source"], "rules+ai")
+        self.assertEqual(project["analysis"]["ai"]["status"], "ok")
+        self.assertIn("混合 Node Web", project["description"])
 
     def test_agent_center_delete_removes_project_folder_and_source_zip(self):
         store = DataStore(self.data_dir)
@@ -537,6 +712,97 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
 
         self.assertIn("360 PDF", str(error.exception))
 
+    def test_360_report_context_filters_materials_by_target_name(self):
+        store = DataStore(self.data_dir)
+        store.import_report_asset("material", "莫绵-个人报告核心版.md", "莫绵材料".encode("utf-8"))
+        store.import_report_asset("material", "管炜-个人报告核心版.md", "管炜核心版".encode("utf-8"))
+        store.import_report_asset("material", "管炜-执行层领导力360评估-个人报告标准版.md", "管炜标准版".encode("utf-8"))
+
+        context = store.report_asset_context("360", target_name="管炜")
+        filenames = [item["filename"] for item in context if item["type"] == "其他分析材料"]
+
+        self.assertCountEqual(
+            filenames,
+            ["管炜-个人报告核心版.md", "管炜-执行层领导力360评估-个人报告标准版.md"],
+        )
+
+    def test_report_context_uses_only_explicitly_selected_assets(self):
+        store = DataStore(self.data_dir)
+        store.import_report_asset("skill", "framework-a.md", "框架 A".encode("utf-8"))
+        store.import_report_asset("skill", "framework-b.md", "框架 B".encode("utf-8"))
+        store.import_report_asset("material", "管炜-核心版.md", "管炜材料".encode("utf-8"))
+        store.import_report_asset("material", "莫绵-核心版.md", "莫绵材料".encode("utf-8"))
+
+        context = store.report_asset_context(
+            "360",
+            target_name="管炜",
+            selected_skills=["framework-b.md"],
+            selected_materials=["莫绵-核心版.md"],
+        )
+        filenames = [item["filename"] for item in context]
+
+        self.assertIn("framework-b.md", filenames)
+        self.assertIn("莫绵-核心版.md", filenames)
+        self.assertNotIn("framework-a.md", filenames)
+        self.assertNotIn("管炜-核心版.md", filenames)
+
+    def test_report_context_rejects_missing_selected_asset(self):
+        store = DataStore(self.data_dir)
+
+        with self.assertRaises(FileNotFoundError):
+            store.report_asset_context(selected_materials=["missing.pdf"])
+
+    def test_report_messages_forward_explicit_asset_selection(self):
+        store = DataStore(self.data_dir)
+        store.import_report_asset("skill", "selected-skill.md", "选中框架".encode("utf-8"))
+        store.import_report_asset("skill", "ignored-skill.md", "未选框架".encode("utf-8"))
+        store.import_report_asset("material", "selected-material.md", "选中材料".encode("utf-8"))
+        store.import_report_asset("material", "ignored-material.md", "未选材料".encode("utf-8"))
+        handler = Handler.__new__(Handler)
+        handler.store = store
+
+        messages = handler._build_report_messages(
+            "生成报告",
+            report_type="talent-review",
+            selected_assets={
+                "skills": ["selected-skill.md"],
+                "materials": ["selected-material.md"],
+            },
+        )
+        asset_message = next(message["content"] for message in messages if message["content"].startswith("导入的 skill 和分析材料："))
+
+        self.assertIn("selected-skill.md", asset_message)
+        self.assertIn("selected-material.md", asset_message)
+        self.assertNotIn("ignored-skill.md", asset_message)
+        self.assertNotIn("ignored-material.md", asset_message)
+
+    def test_360_pdf_summary_extracts_core_metrics(self):
+        store = DataStore(self.data_dir)
+
+        summary = store._extract_360_pdf_summary(
+            "管炜-个人报告核心版.pdf",
+            "排名：13 / 249\n他评：4.62\n自评：4.95\n核心结果：执行层领导力360评估\n上级：4.42  |  同事：4.70  |  下级：4.81\n文本反馈\n",
+        )
+
+        self.assertIn("排名：13 / 249", summary)
+        self.assertIn("他评：4.62", summary)
+        self.assertIn("自评：4.95", summary)
+        self.assertIn("角色评分：上级：4.42；同事：4.70；下级：4.81", summary)
+        self.assertIn("含开放性反馈/文本反馈原文", summary)
+
+    def test_360_pdf_summary_extracts_standard_report_capabilities(self):
+        store = DataStore(self.data_dir)
+
+        summary = store._extract_360_pdf_summary(
+            "管炜-个人报告标准版.pdf",
+            "概况\n您在这次评估中得到的总分为：4.62分。\n他评分较高的能力：目标导向要事第一、务实正直、向外学习并转化；\n他评分较低的能力：路径清晰有根据、引入和培养高潜；\n各角色分差异较大的能力：路径清晰有根据、小步快跑快速迭代。\n开放性反馈\n",
+        )
+
+        self.assertIn("他评：4.62", summary)
+        self.assertIn("高分能力：目标导向要事第一、务实正直、向外学习并转化", summary)
+        self.assertIn("待发展能力：路径清晰有根据、引入和培养高潜", summary)
+        self.assertIn("差异较大能力：路径清晰有根据、小步快跑快速迭代", summary)
+
     def test_360_report_card_title_and_intro_are_normalized(self):
         store = DataStore(self.data_dir)
 
@@ -548,6 +814,29 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
 
         self.assertEqual(report["title"], "莫绵360报告解读")
         self.assertEqual(report["intro"], "参考材料来源")
+
+    def test_360_generated_report_html_extracts_flexible_summary_metrics(self):
+        store = DataStore(self.data_dir)
+        report = store.save_generated_report(
+            "# 兰海涵360报告解读\n\n## 一句话总结\n\n整体表现积极。\n\n- 总体他评：4.56，自评：4.35，排名：21 / 249。\n- 上级评分：4.28。\n- 同事评分：4.53。\n- 下级评分：4.98。\n",
+            "生成兰海涵的360报告",
+            "360",
+        )
+
+        html_report = store.generate_report_html(report["id"])
+
+        self.assertIn("4.56", html_report["htmlContent"])
+        self.assertIn("21 / 249", html_report["htmlContent"])
+        self.assertIn("4.28", html_report["htmlContent"])
+        self.assertIn("4.53", html_report["htmlContent"])
+        self.assertIn("4.98", html_report["htmlContent"])
+
+    def test_360_report_person_name_strips_instruction_verbs(self):
+        store = DataStore(self.data_dir)
+
+        name = store._extract_360_report_person_name("", "生成管炜360报告解读")
+
+        self.assertEqual(name, "管炜")
 
     def test_ai_config_groups_status_does_not_expose_api_keys(self):
         store = DataStore(self.data_dir)
@@ -568,6 +857,8 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
         )
         status = store.ai_config_status()
         raw = json.loads((self.data_dir / "ai_config.json").read_text(encoding="utf-8"))
+        secrets = json.loads((self.data_dir / "local_ai_secrets.json").read_text(encoding="utf-8"))
+        restarted_store = DataStore(self.data_dir)
 
         self.assertTrue(saved["multimodal"]["configured"])
         self.assertTrue(saved["image"]["configured"])
@@ -579,8 +870,12 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
         self.assertNotIn("apiKey", status["image"])
         self.assertEqual(raw["multimodal"]["apiKey"], "")
         self.assertEqual(raw["image"]["apiKey"], "")
+        self.assertEqual(secrets["multimodal"]["apiKey"], "text-secret")
+        self.assertEqual(secrets["image"]["apiKey"], "image-secret")
         self.assertEqual(store.ai_config()["multimodal"]["apiKey"], "text-secret")
         self.assertEqual(store.ai_config()["image"]["apiKey"], "image-secret")
+        self.assertEqual(restarted_store.ai_config()["multimodal"]["apiKey"], "text-secret")
+        self.assertEqual(restarted_store.ai_config()["image"]["apiKey"], "image-secret")
 
     def test_ai_config_reads_legacy_flat_file_as_multimodal_config(self):
         (self.data_dir / "ai_config.json").write_text(
@@ -599,12 +894,21 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
         config = store.ai_config()
         status = store.ai_config_status()
 
-        self.assertEqual(config["multimodal"]["apiKey"], "")
+        self.assertEqual(config["multimodal"]["apiKey"], "legacy-secret")
         self.assertEqual(config["multimodal"]["baseUrl"], "https://legacy.example.test/v1")
         self.assertEqual(config["multimodal"]["model"], "legacy-model")
         self.assertEqual(config["image"]["apiKey"], "")
-        self.assertFalse(status["multimodal"]["configured"])
+        self.assertTrue(status["multimodal"]["configured"])
         self.assertFalse(status["image"]["configured"])
+
+        store.save_ai_config({"multimodal": {"baseUrl": "https://legacy.example.test/v1", "model": "legacy-model"}})
+        raw = json.loads((self.data_dir / "ai_config.json").read_text(encoding="utf-8"))
+        secrets = json.loads((self.data_dir / "local_ai_secrets.json").read_text(encoding="utf-8"))
+        restarted_store = DataStore(self.data_dir)
+
+        self.assertEqual(raw["multimodal"]["apiKey"], "")
+        self.assertEqual(secrets["multimodal"]["apiKey"], "legacy-secret")
+        self.assertEqual(restarted_store.ai_config()["multimodal"]["apiKey"], "legacy-secret")
 
     def test_intelligence_filters_current_items_by_channel_and_search(self):
         (self.data_dir / "intelligence.json").write_text(
@@ -871,11 +1175,20 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
             ]
         )
 
+        template_dir = self.data_dir / "templates"
+        template_dir.mkdir()
+        template = Workbook()
+        template_sheet = template.active
+        template_sheet.append(["盘点结果导入模板"])
+        template_sheet.append(["群体", "*姓名", "*九宫格位置", "*校准后九宫格位置"])
+        template_sheet.append(["", "", "", ""])
+        template.save(template_dir / "盘点结果导入模板.xlsx")
+
         output_path = store.export_calibrated_excel()
         exported = load_workbook(output_path, data_only=True)
-        row = [cell.value for cell in next(exported.active.iter_rows(min_row=2, max_row=2))]
+        row = [cell.value for cell in next(exported.active.iter_rows(min_row=3, max_row=3))]
 
-        self.assertEqual(row[5], "9超级明星")
+        self.assertEqual(row[3], "9超级明星")
 
 
 class ProductionDataTests(unittest.TestCase):
@@ -885,16 +1198,28 @@ class ProductionDataTests(unittest.TestCase):
 
         runtime_reviews = store.review_results()
         runtime_people = store.people()
+        current_reviews = json.loads(store._review_source_path().read_text(encoding="utf-8-sig"))
         legacy_reviews = json.loads((data_dir / "talent_review_2026.json").read_text(encoding="utf-8-sig"))
 
-        self.assertEqual(len(runtime_reviews), 16)
+        self.assertEqual(len(runtime_reviews), len(current_reviews))
         self.assertEqual(len(runtime_people), len(runtime_reviews))
         self.assertNotEqual(len(runtime_reviews), len(legacy_reviews))
 
 
 class ReportShellTests(unittest.TestCase):
+    def _report_shell_source(self):
+        root = Path(__file__).resolve().parents[1]
+        return "\n".join(
+            [
+                (root / "index.html").read_text(encoding="utf-8"),
+                (root / "static" / "js" / "app.js").read_text(encoding="utf-8"),
+                (root / "static" / "css" / "app.css").read_text(encoding="utf-8"),
+                (root / "static" / "modules" / "talent-review" / "talent-review.js").read_text(encoding="utf-8"),
+            ]
+        )
+
     def test_index_has_platform_pages_query_generator_import_intelligence_design_and_settings(self):
-        html = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
+        html = self._report_shell_source()
 
         self.assertIn("HR一站式AI工作台", html)
         self.assertIn("HRobot", html)
@@ -922,7 +1247,8 @@ class ReportShellTests(unittest.TestCase):
         self.assertIn("uploadAgentProjectFile", html)
         self.assertIn("dragover", html)
         self.assertIn("agent-project-desc", html)
-        self.assertIn("独立端口运行", html)
+        self.assertIn("Python 服务", html)
+        self.assertIn("/api/agent-projects/analyze", html)
         self.assertNotIn("agent-project-preview", html)
         self.assertIn('id="posterHistoryGrid"', html)
         self.assertIn('id="posterPreviewDialog"', html)
@@ -972,7 +1298,7 @@ class ReportShellTests(unittest.TestCase):
         self.assertIn("Agent中心", html)
 
     def test_index_supports_hiding_sidebar_and_page_navigation(self):
-        html = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
+        html = self._report_shell_source()
 
         self.assertIn('id="sidebarToggle"', html)
         self.assertIn("toggleSidebar", html)
@@ -982,7 +1308,7 @@ class ReportShellTests(unittest.TestCase):
         self.assertIn(".report-page.active.cover-page { display: grid; }", html)
 
     def test_index_filters_departments_by_review_org_levels(self):
-        html = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
+        html = self._report_shell_source()
 
         self.assertIn('id="groupFilterPanel"', html)
         self.assertIn('id="departmentFilterPanel"', html)
@@ -1017,7 +1343,7 @@ class ReportShellTests(unittest.TestCase):
         self.assertNotIn('id="thirdDepartmentFilterPanel"', html)
 
     def test_placeholder_report_pages_are_blank(self):
-        html = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
+        html = self._report_shell_source()
 
         self.assertNotIn("page-head", html)
         self.assertNotIn("blank-panel", html)
@@ -1025,7 +1351,7 @@ class ReportShellTests(unittest.TestCase):
 
 
     def test_intelligence_design_and_settings_are_not_placeholder_pages(self):
-        html = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
+        html = self._report_shell_source()
 
         self.assertNotIn('id="page-7">\n        <div class="module-placeholder-inner"', html)
         self.assertNotIn('id="page-8">\n        <div class="module-placeholder-inner"', html)

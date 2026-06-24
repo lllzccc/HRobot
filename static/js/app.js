@@ -27,6 +27,10 @@
     let currentReportDetail = null;
     let currentReportView = "md";
     let reportSearchText = "";
+    const selectedReportAssets = {
+      skills: new Set(),
+      materials: new Set()
+    };
     const calibrationHistory = [];
     const calibrationFuture = [];
     const calibrationHistoryLimit = 80;
@@ -49,6 +53,7 @@
     const HOME_MEMO_RECORDS_KEY = "hrobot.homeMemoRecords";
     const AI_CHAT_QUESTION_HISTORY_KEY = "hrobot.aiQuestionHistory";
     const AI_CHAT_QUESTION_HISTORY_LIMIT = 12;
+    const droppedUploadFiles = new Map();
     let homeMemoRecords = [];
     const formatCount = value => new Intl.NumberFormat("zh-CN").format(Number(value) || 0);
     const setHomeCount = (id, value) => {
@@ -141,10 +146,7 @@
       const today = todayDateString();
       const exact = records.find(item => item.date === today);
       if (exact) return { ...exact, source: "来自今日备忘" };
-      const upcoming = records.filter(item => item.date > today).sort((a, b) => a.date.localeCompare(b.date))[0];
-      if (upcoming) return { ...upcoming, source: "来自最近待办" };
-      const latest = records.slice().sort((a, b) => b.date.localeCompare(a.date))[0];
-      return latest ? { ...latest, source: "来自最近备忘" } : null;
+      return null;
     }
 
     function renderHomeMemo() {
@@ -156,8 +158,8 @@
       if (!date || !title || !body || !source) return;
       if (!record) {
         date.textContent = formatMemoDate(todayDateString());
-        title.textContent = "先确认校准差异人员，再用 AI 问答收敛报告主线。";
-        body.textContent = "可以在 09 设置里维护备忘日期和记录；后续自动化方案也可以接入这里，作为首页提醒入口。";
+        title.textContent = "今日暂无备忘！";
+        body.textContent = "今日也要把待办通通拿下！";
         source.textContent = "来自首页默认提醒";
         return;
       }
@@ -317,21 +319,48 @@
     }
 
     function renderAgentProjectCard(project) {
-      const runtimeLabel = project.runtime === "python-server" ? "独立端口运行" : "静态页面";
+      const analysis = project.analysis || {};
+      const environment = project.environment || {};
+      const runtimeNames = {
+        "python-server": "Python 服务",
+        "node-vite": "Vite 服务",
+        "node-next": "Next.js 服务",
+        "node-server": "Node 服务",
+        "static-web": "静态页面",
+        "unknown": "待确认结构"
+      };
+      const runtimeLabel = analysis.runtimeLabel || runtimeNames[project.runtime] || "待确认结构";
       const description = project.description
-        || (project.runtime === "python-server" ? "带独立后端的数据型 Web 功能，点击后启动自己的本地服务。" : "独立打包的前端页面，点击后直接打开正式功能。");
+        || (project.runtime && project.runtime !== "static-web" ? "带独立后端的数据型 Web 功能，点击后启动自己的本地服务。" : "独立打包的前端页面，点击后直接打开正式功能。");
       const fileText = `${Number(project.fileCount) || 0} 个文件`;
+      const confidence = Number(analysis.confidence || 0);
+      const confidenceText = confidence ? `识别 ${Math.round(confidence * 100)}%` : "未识别";
+      const installText = analysis.requiresInstall ? "需安装依赖" : (analysis.source === "rules+ai" ? "AI 已辅助" : "规则扫描");
+      const environmentOk = environment.canOpen !== false;
+      const environmentLabel = environment.label || (environmentOk ? "本机可打开" : "本机缺环境");
+      const environmentMessage = environment.message || "";
+      const environmentClass = environmentOk ? "ready" : "blocked";
+      const openLabel = environmentOk ? "打开功能" : "查看环境";
       return `
         <article class="agent-project-card" data-agent-project-open="${escapeHtml(project.id || "")}" data-agent-project-id="${escapeHtml(project.id || "")}" title="打开正式页面">
           <button class="agent-project-delete" type="button" data-agent-project-delete="${escapeHtml(project.id || "")}" title="删除">×</button>
           <div class="agent-project-kicker">${escapeHtml(runtimeLabel)}</div>
           <h3>${escapeHtml(project.name || "未命名 Web 项目")}</h3>
           <p class="agent-project-desc">${escapeHtml(description)}</p>
+          <div class="agent-project-env ${environmentClass}" title="${escapeHtml(environmentMessage)}">
+            <span>${escapeHtml(environmentLabel)}</span>
+            <strong>${escapeHtml(environmentMessage || (environmentOk ? "运行环境检查通过。" : "运行环境检查未通过。"))}</strong>
+          </div>
           <div class="agent-project-meta">
             <span>${escapeHtml(fileText)}</span>
             <span>${escapeHtml(formatFileSize(project.size || 0))}</span>
+            <span>${escapeHtml(confidenceText)}</span>
+            <span>${escapeHtml(installText)}</span>
           </div>
-          <div class="agent-project-openline"><span>打开功能</span><span aria-hidden="true">→</span></div>
+          <div class="agent-project-actions">
+            <button type="button" data-agent-project-analyze="${escapeHtml(project.id || "")}">重新分析</button>
+            <span class="agent-project-openline"><span>打开功能</span><span aria-hidden="true">→</span></span>
+          </div>
         </article>
       `;
     }
@@ -374,7 +403,7 @@
         status.textContent = "只支持 zip 文件。";
         return;
       }
-      status.textContent = "正在导入 zip 并生成卡片...";
+      status.textContent = "正在导入 zip、扫描结构并生成卡片...";
       const form = new FormData();
       form.append("file", file);
       try {
@@ -383,9 +412,31 @@
         if (!response.ok || payload.error) throw new Error(payload.error || "项目导入失败");
         if ($("agentProjectZipInput")) $("agentProjectZipInput").value = "";
         renderAgentProjects(payload);
-        status.textContent = "项目已导入。";
+        const project = payload.project || {};
+        const source = project.analysis?.source === "rules+ai" ? "，已用 AI 辅助判断结构" : "";
+        status.textContent = `项目已导入${source}。`;
       } catch (error) {
         status.textContent = `项目导入失败：${error.message}`;
+      }
+    }
+
+    async function analyzeAgentProject(projectId) {
+      const status = $("agentProjectStatus");
+      if (status) status.textContent = "正在重新扫描结构，必要时调用后台大模型...";
+      try {
+        const response = await fetch("/api/agent-projects/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: projectId, forceAi: true })
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.error) throw new Error(payload.error || "项目分析失败");
+        renderAgentProjects(payload);
+        const project = payload.project || {};
+        const aiStatus = project.analysis?.aiStatus ? ` ${project.analysis.aiStatus}` : "";
+        if (status) status.textContent = `结构分析已更新。${aiStatus}`;
+      } catch (error) {
+        if (status) status.textContent = `结构分析失败：${error.message}`;
       }
     }
 
@@ -464,6 +515,8 @@
       if (String(page) === "9") loadAiConfig().catch(error => {
         $("multimodalConfigStatus").textContent = `配置加载失败：${error.message}`;
       });
+      if (String(page) === "11" && typeof window.renderReportTool === "function") window.renderReportTool();
+      if (String(page) !== "11" && typeof window.closeReportCalibrationDrawer === "function") window.closeReportCalibrationDrawer();
     }
 
     function toggleSidebar() {
@@ -544,7 +597,7 @@
       }
     }
 
-    async function waitForServerReconnect(deadlineMs = 15000) {
+    async function waitForServerReconnect(deadlineMs = 30000) {
       const started = Date.now();
       while (Date.now() - started < deadlineMs) {
         try {
@@ -563,14 +616,111 @@
       if (button) button.disabled = true;
       setServerStatusDisplay({}, "checking", "正在发送重启命令...");
       try {
-        const response = await fetch("/api/server/restart", { method: "POST" });
-        const payload = await response.json();
-        if (!response.ok || payload.error) throw new Error(payload.error || "重启命令失败");
+        let payload = {};
+        let requestReached = false;
+        try {
+          const response = await fetch("/api/server/restart", { method: "POST" });
+          payload = await response.json();
+          requestReached = true;
+          if (!response.ok || payload.error) throw new Error(payload.error || "重启命令失败");
+        } catch (requestError) {
+          if (requestReached) throw requestError;
+          payload = {};
+        }
         setServerStatusDisplay(payload, "checking", payload.message || "服务器正在重启，请稍候...");
         await waitForServerReconnect();
       } catch (error) {
         setServerStatusDisplay({}, "offline", `重启失败：${error.message}`);
       } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    function setAppUpdateDisplay(payload = {}) {
+      const app = payload.app || {};
+      const latest = payload.latest || {};
+      const config = payload.config || {};
+      if ($("currentAppVersion")) $("currentAppVersion").textContent = app.version || "-";
+      if ($("latestAppVersion")) $("latestAppVersion").textContent = latest.version || "-";
+      if ($("latestInstallerName")) $("latestInstallerName").textContent = latest.installer || "-";
+      if ($("updateCheckedAt")) $("updateCheckedAt").textContent = formatFileTime(payload.checkedAt || "");
+      if ($("updateSourcePathInput") && config.sourcePath !== undefined) $("updateSourcePathInput").value = config.sourcePath || "";
+      if ($("updateInstallDirectory")) {
+        $("updateInstallDirectory").textContent = `备注：文件默认安装目录：${app.installDir || "%LOCALAPPDATA%\\Hrobot"}`;
+      }
+      if ($("installAppUpdateBtn")) $("installAppUpdateBtn").disabled = !payload.updateAvailable;
+      if ($("appUpdateStatus")) {
+        $("appUpdateStatus").textContent = payload.error
+          ? `检查失败：${payload.error}`
+          : payload.updateAvailable
+            ? `发现新版本 ${latest.version}。`
+            : payload.configured
+              ? "当前已是最新版本。"
+              : "请先配置更新源。";
+      }
+    }
+
+    async function loadAppUpdateStatus(options = {}) {
+      const status = $("appUpdateStatus");
+      if (status) status.textContent = options.message || "正在读取更新配置。";
+      const response = await fetch(`/api/app/update?t=${Date.now()}`, { cache: "no-store" });
+      const payload = await response.json();
+      setAppUpdateDisplay(payload);
+      return payload;
+    }
+
+    async function saveAppUpdateConfig(event) {
+      event.preventDefault();
+      const sourcePath = $("updateSourcePathInput")?.value.trim() || "";
+      const response = await fetch("/api/app/update/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourcePath })
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.error) throw new Error(payload.error || "更新源保存失败");
+      await loadAppUpdateStatus({ message: "更新源已保存，正在检查版本。" });
+    }
+
+    async function checkAppUpdate() {
+      const button = $("checkAppUpdateBtn");
+      const status = $("appUpdateStatus");
+      if (button) button.disabled = true;
+      if (status) status.textContent = "正在检查共享盘版本。";
+      try {
+        const response = await fetch("/api/app/update/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourcePath: $("updateSourcePathInput")?.value.trim() || "" })
+        });
+        const payload = await response.json();
+        setAppUpdateDisplay(payload);
+        if (!response.ok || payload.error) throw new Error(payload.error || "检查更新失败");
+      } catch (error) {
+        if (status) status.textContent = `检查失败：${error.message}`;
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function installAppUpdate() {
+      if (!confirm("确认下载并启动更新安装包吗？更新会替换程序文件，但会保留本机数据、设置、备忘录、人才池、落格结果、设计输出和 AI 上下文。")) return;
+      const button = $("installAppUpdateBtn");
+      const status = $("appUpdateStatus");
+      if (button) button.disabled = true;
+      if (status) status.textContent = "正在复制安装包并启动更新。";
+      try {
+        const response = await fetch("/api/app/update/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourcePath: $("updateSourcePathInput")?.value.trim() || "" })
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.error) throw new Error(payload.error || "启动更新失败");
+        setAppUpdateDisplay(payload);
+        if (status) status.textContent = payload.message || "更新安装包已启动。";
+      } catch (error) {
+        if (status) status.textContent = `启动更新失败：${error.message}`;
         if (button) button.disabled = false;
       }
     }
@@ -897,6 +1047,44 @@
       }
     }
 
+    async function searchTalentFromMcp() {
+      const input = $("aiChatInput");
+      const button = $("aiTalentSearchBtn");
+      if (!input) return;
+      const message = input.value.trim();
+      if (!message) {
+        input.focus();
+        appendAiMessage("assistant", "请先输入姓名、工号或部门，例如：江晓伟近四个季度绩效，或 工号 2219。");
+        return;
+      }
+      if (button) button.disabled = true;
+      saveAiQuestionHistory(message);
+      appendAiMessage("user", `【人才检索】${message}`);
+      appendAiMessage("assistant", "正在强制调用 HRobot MCP 人才档案检索...");
+      try {
+        const response = await fetch("/api/mcp/talent-search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, history: aiChatHistory })
+        });
+        const payload = await response.json();
+        const waiting = $("aiChatLog").lastElementChild;
+        if (waiting) waiting.remove();
+        const reply = payload.message || payload.error || "MCP 未返回检索结果。";
+        appendAiMessage("assistant", reply);
+        if (response.ok && !payload.error) {
+          aiChatHistory.push({ role: "user", content: message });
+          aiChatHistory.push({ role: "assistant", content: reply });
+        }
+      } catch (error) {
+        const waiting = $("aiChatLog").lastElementChild;
+        if (waiting) waiting.remove();
+        appendAiMessage("assistant", `人才检索失败：${error.message}`);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
     function reportMarkdownToHtml(content) {
       const lines = String(content || "").split(/\r?\n/);
       const html = [];
@@ -1150,10 +1338,90 @@
       switchPage(5);
     }
 
+    function uploadFilesForInput(fileInputId) {
+      const input = $(fileInputId);
+      return droppedUploadFiles.get(fileInputId) || [...(input?.files || [])];
+    }
+
+    function resetUploadInput(fileInputId) {
+      const input = $(fileInputId);
+      if (input) input.value = "";
+      droppedUploadFiles.delete(fileInputId);
+      syncFileDropzone(input, []);
+    }
+
+    function fileDropzoneText(files) {
+      if (!files.length) return "";
+      if (files.length === 1) return files[0].name;
+      return `${files.length} 个文件：${files.slice(0, 2).map(file => file.name).join("、")}${files.length > 2 ? "..." : ""}`;
+    }
+
+    function syncFileDropzone(inputOrId, files = null) {
+      const input = typeof inputOrId === "string" ? $(inputOrId) : inputOrId;
+      if (!input) return;
+      const zone = document.querySelector(`[data-file-dropzone="${input.id}"]`);
+      if (!zone) return;
+      const title = zone.querySelector("[data-file-dropzone-title]");
+      const selected = files || uploadFilesForInput(input.id);
+      zone.classList.toggle("has-file", selected.length > 0);
+      if (title) {
+        title.textContent = selected.length ? fileDropzoneText(selected) : (zone.dataset.defaultTitle || title.dataset.defaultTitle || title.textContent);
+      }
+    }
+
+    function submitFileDropzone(input) {
+      const form = input?.form;
+      if (!form) return;
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit();
+      } else {
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      }
+    }
+
+    function initFileDropzones() {
+      document.querySelectorAll("[data-file-dropzone]").forEach(zone => {
+        const input = $(zone.dataset.fileDropzone);
+        if (!input) return;
+        const title = zone.querySelector("[data-file-dropzone-title]");
+        if (title && !zone.dataset.defaultTitle) zone.dataset.defaultTitle = title.textContent;
+        input.addEventListener("change", () => {
+          droppedUploadFiles.delete(input.id);
+          syncFileDropzone(input);
+        });
+        zone.addEventListener("keydown", event => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          input.click();
+        });
+        zone.addEventListener("click", event => {
+          if (event.target === input) return;
+          input.click();
+        });
+        zone.addEventListener("dragover", event => {
+          event.preventDefault();
+          zone.classList.add("drag-over");
+        });
+        zone.addEventListener("dragleave", event => {
+          if (!zone.contains(event.relatedTarget)) zone.classList.remove("drag-over");
+        });
+        zone.addEventListener("drop", event => {
+          event.preventDefault();
+          zone.classList.remove("drag-over");
+          const files = [...event.dataTransfer.files];
+          if (!files.length) return;
+          const selected = input.multiple ? files : files.slice(0, 1);
+          droppedUploadFiles.set(input.id, selected);
+          syncFileDropzone(input, selected);
+          submitFileDropzone(input);
+        });
+      });
+    }
+
     async function uploadFile(endpoint, fileInputId, statusId) {
       const input = $(fileInputId);
       const status = $(statusId);
-      const file = input.files[0];
+      const file = uploadFilesForInput(fileInputId)[0];
       if (!file) {
         status.textContent = "请先选择文件。";
         return null;
@@ -1167,14 +1435,13 @@
         throw new Error(payload.error || "导入失败");
       }
       status.textContent = `导入成功：${payload.rows} 条数据`;
-      input.value = "";
+      resetUploadInput(fileInputId);
       return payload;
     }
 
     async function uploadFiles(endpoint, fileInputId, statusId) {
-      const input = $(fileInputId);
       const status = $(statusId);
-      const files = [...input.files];
+      const files = uploadFilesForInput(fileInputId);
       if (!files.length) {
         status.textContent = "请先选择文件。";
         return null;
@@ -1188,7 +1455,7 @@
         throw new Error(payload.error || "导入失败");
       }
       status.textContent = `导入成功：${payload.rows} 条数据`;
-      input.value = "";
+      resetUploadInput(fileInputId);
       return payload;
     }
 
@@ -1212,8 +1479,14 @@
     }
 
     function renderFileItems(items, deleteType = "") {
+      const reportAssetKind = deleteType === "report-skill"
+        ? "skills"
+        : deleteType === "report-material"
+          ? "materials"
+          : "";
       return (items || []).map(item => `
-        <div class="asset-item">
+        <div class="asset-item${reportAssetKind && selectedReportAssets[reportAssetKind].has(item.filename) ? " selected" : ""}"
+          ${reportAssetKind ? `role="checkbox" tabindex="0" aria-checked="${selectedReportAssets[reportAssetKind].has(item.filename)}" data-report-asset-kind="${reportAssetKind}" data-report-asset-filename="${escapeHtml(item.filename)}"` : ""}>
           <strong>${escapeHtml(item.filename)}</strong>
           <span class="asset-meta">
             <span>${escapeHtml(formatFileSize(item.size))} · ${escapeHtml(formatFileTime(item.updatedAt))}</span>
@@ -1221,6 +1494,48 @@
           </span>
         </div>
       `).join("") || `<div class="asset-item"><strong>暂无文件</strong><span>-</span></div>`;
+    }
+
+    function selectedReportAssetBlock() {
+      const skillNames = [...selectedReportAssets.skills];
+      const materialNames = [...selectedReportAssets.materials];
+      if (!skillNames.length && !materialNames.length) return "";
+      const lines = ["【已选报告资料】"];
+      if (skillNames.length) lines.push(`- Skill：${skillNames.join("、")}`);
+      if (materialNames.length) lines.push(`- 分析材料：${materialNames.join("、")}`);
+      return lines.join("\n");
+    }
+
+    function syncSelectedReportAssetsToInstruction() {
+      const input = $("reportInstructionInput");
+      if (!input) return;
+      const selectionPattern = /\n{0,2}【已选报告资料】(?:\r?\n-(?: Skill| 分析材料)：[^\r\n]*)*/g;
+      const manualInstruction = input.value.replace(selectionPattern, "").trimEnd();
+      const selectionBlock = selectedReportAssetBlock();
+      input.value = [manualInstruction, selectionBlock].filter(Boolean).join("\n\n");
+      const skillCount = selectedReportAssets.skills.size;
+      const materialCount = selectedReportAssets.materials.size;
+      const status = $("reportAssetSelectionStatus");
+      if (status) {
+        status.textContent = skillCount || materialCount
+          ? `已选 ${skillCount} 个 Skill、${materialCount} 份材料；再次点击可取消。生成时只读取这些资料。`
+          : "可点击下方已导入的 Skill 或材料，自动回填到报告要求。";
+      }
+    }
+
+    function toggleReportAsset(item) {
+      const kind = item?.dataset.reportAssetKind;
+      const filename = item?.dataset.reportAssetFilename;
+      const selected = selectedReportAssets[kind];
+      if (!selected || !filename) return;
+      if (selected.has(filename)) {
+        selected.delete(filename);
+      } else {
+        selected.add(filename);
+      }
+      item.classList.toggle("selected", selected.has(filename));
+      item.setAttribute("aria-checked", String(selected.has(filename)));
+      syncSelectedReportAssetsToInstruction();
     }
 
     async function deleteImportedFile(type, filename) {
@@ -1241,13 +1556,26 @@
 
     document.addEventListener("click", event => {
       const button = event.target.closest("[data-file-delete]");
-      if (!button) return;
+      if (button) {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteImportedFile(button.dataset.fileDelete, button.dataset.filename).catch(error => {
+          const status = button.dataset.fileDelete.startsWith("report-") ? $("reportGenerateStatus") : $("importSourceStatus");
+          if (status) status.textContent = `删除失败：${error.message}`;
+        });
+        return;
+      }
+      const reportAsset = event.target.closest("[data-report-asset-kind]");
+      if (reportAsset) toggleReportAsset(reportAsset);
+    });
+
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target.closest("[data-file-delete]")) return;
+      const reportAsset = event.target.closest("[data-report-asset-kind]");
+      if (!reportAsset) return;
       event.preventDefault();
-      event.stopPropagation();
-      deleteImportedFile(button.dataset.fileDelete, button.dataset.filename).catch(error => {
-        const status = button.dataset.fileDelete.startsWith("report-") ? $("reportGenerateStatus") : $("importSourceStatus");
-        if (status) status.textContent = `删除失败：${error.message}`;
-      });
+      toggleReportAsset(reportAsset);
     });
 
     async function loadImportSources() {
@@ -1265,8 +1593,17 @@
     async function loadReportAssets() {
       const response = await fetch("/api/report/assets");
       const payload = await response.json();
+      const availableSkills = new Set((payload.skills || []).map(item => item.filename));
+      const availableMaterials = new Set((payload.materials || []).map(item => item.filename));
+      selectedReportAssets.skills.forEach(filename => {
+        if (!availableSkills.has(filename)) selectedReportAssets.skills.delete(filename);
+      });
+      selectedReportAssets.materials.forEach(filename => {
+        if (!availableMaterials.has(filename)) selectedReportAssets.materials.delete(filename);
+      });
       if ($("reportSkillAssetList")) $("reportSkillAssetList").innerHTML = renderFileItems(payload.skills || [], "report-skill");
       if ($("reportMaterialAssetList")) $("reportMaterialAssetList").innerHTML = renderFileItems(payload.materials || [], "report-material");
+      syncSelectedReportAssetsToInstruction();
     }
 
     async function importReportSkill(event) {
@@ -1292,13 +1629,18 @@
     async function generateReport(event) {
       event.preventDefault();
       const status = $("reportGenerateStatus");
+      const selectedAssets = {
+        skills: [...selectedReportAssets.skills],
+        materials: [...selectedReportAssets.materials]
+      };
       status.textContent = "正在读取人才盘点、档案、skill 和分析材料，并调用模型生成 MD 报告...";
       const response = await fetch("/api/report/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reportType: $("reportTypeInput").value,
-          instruction: $("reportInstructionInput").value.trim()
+          instruction: $("reportInstructionInput").value.trim(),
+          ...(selectedAssets.skills.length || selectedAssets.materials.length ? { selectedAssets } : {})
         })
       });
       const payload = await response.json();
@@ -1328,6 +1670,8 @@
           : "当前优先读取：报告预设";
       }
     }
+
+    initFileDropzones();
 
     document.querySelectorAll("[data-home-page]").forEach(item => {
       item.addEventListener("click", () => switchPage(item.dataset.homePage));
@@ -1376,16 +1720,30 @@
     $("testImageConfigBtn").addEventListener("click", testImageConfig);
     $("refreshServerStatusBtn").addEventListener("click", () => loadServerStatus().catch(() => {}));
     $("restartServerBtn").addEventListener("click", restartServer);
+    $("appUpdateForm")?.addEventListener("submit", event => {
+      saveAppUpdateConfig(event).catch(error => {
+        if ($("appUpdateStatus")) $("appUpdateStatus").textContent = `保存失败：${error.message}`;
+      });
+    });
+    $("checkAppUpdateBtn")?.addEventListener("click", checkAppUpdate);
+    $("installAppUpdateBtn")?.addEventListener("click", installAppUpdate);
     $("designPromptConfigForm").addEventListener("submit", saveDesignPromptConfig);
     $("refreshDesignPromptConfigBtn").addEventListener("click", refreshDesignPromptConfig);
     $("agentProjectGrid").addEventListener("click", event => {
       const deleteButton = event.target.closest("[data-agent-project-delete]");
+      const analyzeButton = event.target.closest("[data-agent-project-analyze]");
       const addButton = event.target.closest("[data-agent-project-add]");
       const projectCard = event.target.closest("[data-agent-project-open]");
       if (deleteButton) {
         event.preventDefault();
         event.stopPropagation();
         deleteAgentProject(deleteButton.dataset.agentProjectDelete);
+        return;
+      }
+      if (analyzeButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        analyzeAgentProject(analyzeButton.dataset.agentProjectAnalyze);
         return;
       }
       if (addButton) {
@@ -1453,6 +1811,7 @@
     $("posterPreviewCloseBtn").addEventListener("click", () => $("posterPreviewDialog").close());
     $("goSettingsFromDesign").addEventListener("click", () => switchPage(9));
     $("aiChatForm").addEventListener("submit", sendAiMessage);
+    $("aiTalentSearchBtn").addEventListener("click", searchTalentFromMcp);
     $("aiChatHistoryList").addEventListener("click", event => {
       const item = event.target.closest("[data-ai-history-question]");
       if (!item) return;
@@ -1497,6 +1856,21 @@
     $("reportSearchInputGenerate").addEventListener("input", handleReportSearch);
     $("refreshReportAssetsBtn").addEventListener("click", () => loadReportAssets().catch(error => $("reportGenerateStatus").textContent = `刷新失败：${error.message}`));
     $("refreshReportAssetsInlineBtn").addEventListener("click", () => loadReportAssets().catch(error => $("reportGenerateStatus").textContent = `刷新失败：${error.message}`));
+    document.querySelectorAll("[data-report-slide]").forEach(button => {
+      button.addEventListener("click", () => window.setReportPptSlide?.(button.dataset.reportSlide));
+    });
+    $("reportCalibrationDrawerToggle")?.addEventListener("click", () => window.openReportCalibrationDrawer?.());
+    $("reportDrawerCloseBtn")?.addEventListener("click", () => window.closeReportCalibrationDrawer?.());
+    $("reportCalibrationBackdrop")?.addEventListener("click", () => window.closeReportCalibrationDrawer?.());
+    $("reportDrawerTalentPoolSelect")?.addEventListener("change", event => {
+      window.setReportDrawerTalentPoolFilter?.(event.target.value);
+    });
+    $("reportDrawerSaveBtn")?.addEventListener("click", () => {
+      window.saveReportDrawerCalibration?.().catch(error => {
+        const status = $("statusLine");
+        if (status) status.textContent = `保存失败：${error.message}`;
+      });
+    });
     $("reviewImportForm").addEventListener("submit", importReviewExcel);
     $("profileImportForm").addEventListener("submit", importProfilesJson);
     $("employeeRosterImportForm").addEventListener("submit", importEmployeeRosterExcel);
@@ -1513,6 +1887,9 @@
     loadAgentProjects().catch(error => {
       $("agentProjectStatus").textContent = `Agent 中心加载失败：${error.message}`;
     });
+    loadAppUpdateStatus().catch(error => {
+      if ($("appUpdateStatus")) $("appUpdateStatus").textContent = `更新配置加载失败：${error.message}`;
+    });
     refreshHomeUsageStats();
     renderAiQuestionHistory();
     loadAiConfig().catch(error => appendAiMessage("assistant", `AI 配置加载失败：${error.message}`));
@@ -1521,4 +1898,5 @@
     loadImportSources().catch(() => {});
     loadPeople().catch(error => {
       $("profile").innerHTML = `<div class="reason-note">加载失败：${error.message}</div>`;
+      if (typeof window.renderReportTool === "function") window.renderReportTool();
     });

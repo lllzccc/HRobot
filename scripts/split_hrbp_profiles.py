@@ -13,9 +13,11 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG = PROJECT_ROOT / "data" / "permissions" / "hrbp_permissions.json"
+EXTERNAL_SNAPSHOT_ROOT = PROJECT_ROOT.parent / "HRobot talent snapshots"
+SNAPSHOT_ROOT = EXTERNAL_SNAPSHOT_ROOT if EXTERNAL_SNAPSHOT_ROOT.exists() else PROJECT_ROOT / "data"
+DEFAULT_CONFIG = SNAPSHOT_ROOT / "permissions" / "hrbp_permissions.json"
 DEFAULT_PROFILE_DIR = PROJECT_ROOT / "data" / "talent_profiles"
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "hrbp_profile_splits"
+DEFAULT_OUTPUT_ROOT = SNAPSHOT_ROOT / "hrbp_profile_splits"
 
 
 DEPARTMENT_FIELDS = (

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HR一站式AI工作台</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="static/css/app.css">
+  <link rel="stylesheet" href="static/css/app.css?v=20260618-home-module-watermarks">
 
 </head>
 <body>
@@ -23,6 +23,7 @@
       <nav class="nav-list" aria-label="报告分页导航">
         <button class="nav-item active" data-page="1"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V20h13v-9.5"/><path d="M9.5 20v-5h5v5"/></svg></span><span class="nav-text">首页</span></button>
         <button class="nav-item" data-page="5"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3.5h7l3 3V20.5H7z"/><path d="M14 3.5v4h4"/><path d="M9.5 12h5"/><path d="M9.5 16h4"/></svg></span><span class="nav-text">报告生成</span></button>
+        <button class="nav-item" data-page="11"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4.5 4.5h15v15h-15z"/><path d="M4.5 9.5h15"/><path d="M4.5 14.5h15"/><path d="M9.5 4.5v15"/><path d="M14.5 4.5v15"/><path d="M7 21h10"/></svg></span><span class="nav-text">盘点汇报工具</span></button>
         <button class="nav-item" data-page="3"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 9.3h16"/><path d="M4 14.7h16"/><path d="M9.3 4v16"/><path d="M14.7 4v16"/></svg></span><span class="nav-text">人才盘点</span></button>
         <button class="nav-item" data-page="8"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 2-.7 2-1.6 0-.5-.2-.9-.5-1.2-.3-.4-.5-.7-.5-1.2 0-1 1-1.8 2.1-1.8H16a4.5 4.5 0 0 0 0-9c-1.2-.7-2.5-1.2-4-1.2z"/><path d="M7.8 10h.1"/><path d="M10.3 7.5h.1"/><path d="M13.7 7.5h.1"/><path d="M16.2 10h.1"/></svg></span><span class="nav-text">设计中心</span></button>
         <button class="nav-item" data-page="10"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5v4"/><path d="M12 16.5v4"/><path d="M4.6 8.2l3.5 2"/><path d="M15.9 13.8l3.5 2"/><path d="M19.4 8.2l-3.5 2"/><path d="M8.1 13.8l-3.5 2"/><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/></svg></span><span class="nav-text">Agent中心</span></button>
@@ -40,12 +41,11 @@
             <section class="home-identity-card" aria-label="HRBP 工作台">
               <div class="home-copy">
                 <p class="home-eyebrow">HRobot</p>
-                <h1 class="cover-title">
-                  <span>HRBP</span>
-                  <span>一站式</span>
-                  <span>AI 工作台</span>
+                <h1 class="cover-title" aria-label="HRBP AI Studio">
+                  <span>HRBP AI</span>
+                  <span>Studio</span>
                 </h1>
-                <p class="cover-subtitle">校准、问答、报告和情报都在一个工作面里完成。</p>
+                <p class="cover-subtitle">从人才校准、AI问答到报告产出，HRBP 的判断和行动在这里闭环。</p>
                 <div class="home-actions" aria-label="快捷入口">
                   <button class="primary home-action" type="button" data-home-page="3">进入人才盘点</button>
                   <button class="home-action" type="button" data-home-page="5">生成报告</button>
@@ -59,8 +59,8 @@
                   <span class="home-memo-date" id="homeMemoDate">今天</span>
                 </div>
                 <div>
-                  <h2 class="home-memo-title" id="homeMemoTitle">先确认校准差异人员，再用 AI 问答收敛报告主线。</h2>
-                  <p class="home-memo-body" id="homeMemoBody">可以在 09 设置里维护备忘日期和记录；后续自动化方案也可以接入这里，作为首页提醒入口。</p>
+                  <h2 class="home-memo-title" id="homeMemoTitle">今日暂无备忘！</h2>
+                  <p class="home-memo-body" id="homeMemoBody">今日也要把待办通通拿下！</p>
                 </div>
                 <div class="home-memo-actions">
                   <span id="homeMemoSource">来自首页默认提醒</span>
@@ -71,22 +71,44 @@
                 <button class="home-module" type="button" data-home-page="5">
                   <span>最近报告</span>
                   <strong><span id="homeLatestReportTitle">还没有生成报告</span><br><span id="homeLatestReportMeta">导入 skill 和分析材料后，可以在这里继续查看最近产出。</span></strong>
-                </button>
-                <button class="home-module" type="button" data-home-page="5">
-                  <span>AI 使用累计</span>
-                  <strong>提问 <span class="command-number" id="homeAiQuestionCount">0</span> 次，报告 <span class="command-number" id="homeReportCount">0</span> 份，海报 <span class="command-number" id="homePosterCount">0</span> 张</strong>
-                </button>
-                <button class="home-module" type="button" data-home-page="4">
-                  <span>AI问答</span>
-                  <strong>围绕人员、部门和风险做即时查询</strong>
-                </button>
-                <button class="home-module" type="button" data-home-page="7">
-                  <span>情报中心</span>
-                  <strong>跟踪 AI × HR 与游戏组织信号</strong>
+                  <span class="home-module-watermark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M7 3.5h7l3 3V20.5H7z"/><path d="M14 3.5v4h4"/><path d="M9.5 12h5"/><path d="M9.5 16h4"/></svg>
+                  </span>
                 </button>
                 <button class="home-module" type="button" data-home-page="10">
                   <span>Agent中心</span>
                   <strong>收纳 vibe coding 后的独立 Web 功能</strong>
+                  <span class="home-module-watermark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 3.5v4"/><path d="M12 16.5v4"/><path d="M4.6 8.2l3.5 2"/><path d="M15.9 13.8l3.5 2"/><path d="M19.4 8.2l-3.5 2"/><path d="M8.1 13.8l-3.5 2"/><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/></svg>
+                  </span>
+                </button>
+                <button class="home-module" type="button" data-home-page="4">
+                  <span>AI问答</span>
+                  <strong>围绕人员、部门和风险做即时查询</strong>
+                  <span class="home-module-watermark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M5 5.5h14v10H8l-3 3z"/><path d="M9 9h6"/><path d="M9 12h4"/></svg>
+                  </span>
+                </button>
+                <button class="home-module" type="button" data-home-page="7">
+                  <span>情报中心</span>
+                  <strong>跟踪 AI × HR 与游戏组织信号</strong>
+                  <span class="home-module-watermark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 0 1 15 0"/><path d="M7.5 12a4.5 4.5 0 0 1 9 0"/><path d="M11 13.5l4-5"/><path d="M12 14.5h.1"/><path d="M5 18h14"/></svg>
+                  </span>
+                </button>
+                <button class="home-module" type="button" data-home-page="8">
+                  <span>设计中心</span>
+                  <strong>连接海报生成与品牌提示词配置</strong>
+                  <span class="home-module-watermark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 2-.7 2-1.6 0-.5-.2-.9-.5-1.2-.3-.4-.5-.7-.5-1.2 0-1 1-1.8 2.1-1.8H16a4.5 4.5 0 0 0 0-9c-1.2-.7-2.5-1.2-4-1.2z"/><path d="M7.8 10h.1"/><path d="M10.3 7.5h.1"/><path d="M13.7 7.5h.1"/><path d="M16.2 10h.1"/></svg>
+                  </span>
+                </button>
+                <button class="home-module" type="button" data-home-page="9">
+                  <span>设置</span>
+                  <strong>维护 AI 接入、首页备忘和系统偏好</strong>
+                  <span class="home-module-watermark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6z"/><path d="M19.2 13.3a7.8 7.8 0 0 0 0-2.6l2-1.5-2-3.4-2.4 1a8.3 8.3 0 0 0-2.2-1.3L14.3 3h-4.6l-.4 2.5a8.3 8.3 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.5a7.8 7.8 0 0 0 0 2.6l-2 1.5 2 3.4 2.4-1a8.3 8.3 0 0 0 2.2 1.3l.4 2.5h4.6l.4-2.5a8.3 8.3 0 0 0 2.2-1.3l2.4 1 2-3.4z"/></svg>
+                  </span>
                 </button>
               </div>
             </div>
@@ -311,6 +333,7 @@
 
           <form class="chat-compose" id="aiChatForm">
             <textarea id="aiChatInput" rows="3" placeholder="输入你想查询或分析的问题，例如：请列出美术中心 789 宫格人员，并说明他们的职级、序列和无成长预警情况。"></textarea>
+            <button class="secondary" id="aiTalentSearchBtn" type="button">人才检索</button>
             <button class="primary" type="submit">发送</button>
           </form>
         </div>
@@ -360,6 +383,7 @@
                 <textarea id="reportInstructionInput" placeholder="有问题，尽管问。例如：重点分析高潜人才分布、关键组织风险、校准后变化和培养建议。"></textarea>
                 <button class="primary report-submit" type="submit">生成报告</button>
               </div>
+              <div class="status-line report-asset-selection-status" id="reportAssetSelectionStatus">可点击下方已导入的 Skill 或材料，自动回填到报告要求。</div>
               <div class="report-type-actions" aria-label="报告类型">
                 <button class="report-type-action" type="button" data-report-type="360" data-setting-file="360报告设定说明.md">
                   <span>360报告</span>
@@ -378,29 +402,192 @@
               <form class="import-card" id="skillImportForm">
                 <h2>导入 skill 框架</h2>
                 <p>上传用于报告生成的分析框架、输出结构、判断口径或提示词文件，支持文本、Markdown、JSON 等材料。</p>
-                <input id="skillFileInput" type="file">
+                <div class="file-dropzone" data-file-dropzone="skillFileInput" tabindex="0" role="button" aria-label="拖拽或选择 skill 文件">
+                  <input id="skillFileInput" type="file">
+                  <span class="file-dropzone-title" data-file-dropzone-title>拖入文件或点击选择</span>
+                  <span class="file-dropzone-meta" data-file-dropzone-meta>支持文本、Markdown、JSON 等材料</span>
+                </div>
                 <button class="primary" type="submit">导入 skill</button>
                 <div class="status-line" id="skillImportStatus"></div>
                 <div class="card-title-row">
                   <h2>已导入 skill</h2>
                   <button type="button" id="refreshReportAssetsBtn">刷新</button>
                 </div>
-                <div id="reportSkillAssetList" class="asset-list compact-file-list"></div>
+                <div id="reportSkillAssetList" class="asset-list compact-file-list" aria-label="可选的已导入 Skill"></div>
               </form>
               <form class="import-card" id="materialImportForm">
                 <h2>导入其他分析材料</h2>
                 <p>上传业务背景、组织说明、会议纪要、补充分析等材料。AI 会结合人才盘点结果与这些材料生成报告。</p>
-                <input id="materialFileInput" type="file">
+                <div class="file-dropzone" data-file-dropzone="materialFileInput" tabindex="0" role="button" aria-label="拖拽或选择分析材料">
+                  <input id="materialFileInput" type="file">
+                  <span class="file-dropzone-title" data-file-dropzone-title>拖入文件或点击选择</span>
+                  <span class="file-dropzone-meta" data-file-dropzone-meta>支持文本、Markdown、PDF、JSON 等材料</span>
+                </div>
                 <button class="primary" type="submit">导入材料</button>
                 <div class="status-line" id="materialImportStatus"></div>
                 <div class="card-title-row">
                   <h2>已导入材料</h2>
                   <button type="button" id="refreshReportAssetsInlineBtn">刷新</button>
                 </div>
-                <div id="reportMaterialAssetList" class="asset-list compact-file-list"></div>
+                <div id="reportMaterialAssetList" class="asset-list compact-file-list" aria-label="可选的已导入分析材料"></div>
               </form>
             </div>
           </section>
+        </div>
+      </section>
+
+      <section class="report-page talent-report-tool-page" id="page-11">
+        <div class="report-ppt-app">
+          <nav class="report-ppt-nav" aria-label="汇报分页导航">
+            <div class="report-ppt-brand">
+              <img src="assets/brand/logo-fullcolor.png" alt="三七互娱">
+              <span>人才盘点汇报</span>
+            </div>
+            <div class="report-ppt-tabs">
+              <button class="active" type="button" data-report-slide="overview">整体盘点概况</button>
+              <button type="button" data-report-slide="campus">校招生群体</button>
+              <button type="button" data-report-slide="cadre">干部群体</button>
+              <button type="button" data-report-slide="role">关键岗位主子头</button>
+            </div>
+            <button class="primary report-ppt-drawer-toggle" type="button" id="reportCalibrationDrawerToggle">展开校准器</button>
+          </nav>
+
+          <main class="report-ppt-stage" id="reportPptStage" aria-live="polite">
+            <section class="report-ppt-slide active" data-report-slide-panel="overview">
+              <div class="report-ppt-slide-head">
+                <span>01</span>
+                <div>
+                  <h2>三七游戏整体的盘点概况</h2>
+                  <p>以九宫格、年度区位变化和人才池标签为主线，先看总盘，再拆分重点人群。</p>
+                </div>
+              </div>
+              <div class="report-ppt-grid">
+                <article class="report-ppt-panel report-ppt-wide">
+                  <h3>变化情况</h3>
+                  <p>今年 789 宫格占比维持在关键人才带，核心变化来自两类人：一类是 7/8 宫格中承担项目攻坚的人才流失，另一类是 1/2/3 宫格经过岗位重配、导师辅导和绩效目标重订后出现激活。</p>
+                  <div class="report-ppt-metrics">
+                    <div><strong data-ppt-metric="high">-</strong><span>789 宫格</span></div>
+                    <div><strong data-ppt-metric="changes">-</strong><span>校准差异记录</span></div>
+                    <div><strong data-ppt-metric="leader">-</strong><span>最大分布区位</span></div>
+                  </div>
+                </article>
+                <article class="report-ppt-panel">
+                  <h3>789 可惜离职</h3>
+                  <p>虚构样例：发行中台和自研项目组各有 1 名 8 宫格骨干离职，画像集中在 P7/P8、跨团队协作强、外部机会明确。建议对 7/8 宫格建立半年一次的保留访谈。</p>
+                </article>
+                <article class="report-ppt-panel">
+                  <h3>123 激活</h3>
+                  <p>虚构样例：1 宫格以适配风险为主，2/3 宫格中有 6 人通过目标拆解和主管共创进入可观察改善期。激活动作应绑定 60 天任务和直接上级复盘。</p>
+                </article>
+                <article class="report-ppt-panel report-ppt-wide">
+                  <h3>人才池整体人群提炼</h3>
+                  <div class="report-ppt-tag-grid">
+                    <span>9 宫格：强结果、能带战役、可进入继任讨论</span>
+                    <span>8 宫格：绩效稳定突破，短板多在影响力或业务前瞻</span>
+                    <span>7 宫格：潜力明确，需要真实挑战任务验证产出</span>
+                    <span>1 宫格：适配预警，优先确认岗位、意愿和绩效底线</span>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <section class="report-ppt-slide" data-report-slide-panel="campus">
+              <div class="report-ppt-slide-head">
+                <span>02</span>
+                <div>
+                  <h2>群体分析：校招生群体</h2>
+                  <p>校招生重点看成长速度、晋升节奏和标杆样本，避免只用当前绩效判断长期潜力。</p>
+                </div>
+              </div>
+              <div class="report-ppt-grid three">
+                <article class="report-ppt-panel">
+                  <h3>学生现状</h3>
+                  <p>虚构样例：校招生整体集中在 3/5/7 宫格，稳定执行者较多，高潜样本分布在策划和数据分析岗位。主要短板是业务抽象能力和跨团队推动经验不足。</p>
+                </article>
+                <article class="report-ppt-panel">
+                  <h3>晋升情况</h3>
+                  <p>虚构样例：近两届校招生中，进入 P6 的人员以项目闭环能力强、复盘质量高、能主动补位为共同特征。建议把晋升观察点前置到季度项目复盘。</p>
+                </article>
+                <article class="report-ppt-panel">
+                  <h3>标杆样本</h3>
+                  <p>虚构样例：标杆校招生通常具备三类行为：主动建立数据口径，能在需求变化下保持节奏，敢于向上暴露风险。后续可沉淀为校招生培养案例库。</p>
+                </article>
+              </div>
+            </section>
+
+            <section class="report-ppt-slide" data-report-slide-panel="cadre">
+              <div class="report-ppt-slide-head">
+                <span>03</span>
+                <div>
+                  <h2>群体分析：干部群体</h2>
+                  <p>干部分析结合 360 反馈、干部画像和管理核心问题，关注组织杠杆而不是单点能力。</p>
+                </div>
+              </div>
+              <div class="report-ppt-grid">
+                <article class="report-ppt-panel">
+                  <h3>360 分析</h3>
+                  <p>虚构样例：干部 360 的高频优势是结果导向和响应速度，低频短板集中在授权、长期人才培养和跨部门预期管理。下级反馈比同级反馈更能暴露管理摩擦。</p>
+                </article>
+                <article class="report-ppt-panel">
+                  <h3>干部画像</h3>
+                  <p>虚构样例：当前干部可分为三类：战役型、专家型、协调型。战役型适合攻坚，专家型需要补管理节奏，协调型需要加强业务判断和决策边界。</p>
+                </article>
+                <article class="report-ppt-panel report-ppt-wide">
+                  <h3>管理核心问题与关注点</h3>
+                  <ul class="report-ppt-list">
+                    <li>部分干部能够完成目标，但没有形成可复制的方法和人才梯队。</li>
+                    <li>跨团队协作中，目标拆解清晰度高于资源协调能力，导致项目后段消耗较大。</li>
+                    <li>建议对 7/8/9 宫格干部建立差异化培养路径，分别对应挑战验证、影响力扩展和继任准备。</li>
+                  </ul>
+                </article>
+              </div>
+            </section>
+
+            <section class="report-ppt-slide" data-report-slide-panel="role">
+              <div class="report-ppt-slide-head">
+                <span>04</span>
+                <div>
+                  <h2>关键岗位主子头分析</h2>
+                  <p>围绕策划、程序、美术三类主干岗位，看关键岗位的供给质量和风险位置。</p>
+                </div>
+              </div>
+              <div class="report-ppt-grid three">
+                <article class="report-ppt-panel">
+                  <h3>策划</h3>
+                  <p>虚构样例：策划主子头的差异来自用户理解和系统拆解深度。9 宫格样本能把体验目标转成可执行机制，1/2 宫格多卡在需求表达和版本节奏。</p>
+                </article>
+                <article class="report-ppt-panel">
+                  <h3>程序</h3>
+                  <p>虚构样例：程序主子头稳定性较好，高潜人才的区分点在架构判断、性能意识和对产品目标的理解。建议把核心模块 owner 纳入保留名单。</p>
+                </article>
+                <article class="report-ppt-panel">
+                  <h3>美术</h3>
+                  <p>虚构样例：美术主子头的强项是交付质量，风险在风格前瞻和跨环节协同。高潜人员应被放到概念验证、风格统一和外包质量管理场景中验证。</p>
+                </article>
+              </div>
+            </section>
+          </main>
+
+          <div class="report-calibration-backdrop" id="reportCalibrationBackdrop" hidden></div>
+          <aside class="report-calibration-drawer" id="reportCalibrationDrawer" aria-label="人才盘点校准器" aria-hidden="true">
+            <div class="report-calibration-head">
+              <div>
+                <h2>人才盘点校准器</h2>
+                <p>保留九宫格、人员档案与校准，调整后仍使用同一套保存逻辑。</p>
+              </div>
+              <div class="report-calibration-actions">
+                <label class="report-drawer-pool-filter" for="reportDrawerTalentPoolSelect">
+                  <span>人才池</span>
+                  <select id="reportDrawerTalentPoolSelect" aria-label="人才池筛选">
+                    <option value="">全部人才池</option>
+                  </select>
+                </label>
+                <button class="primary" type="button" id="reportDrawerSaveBtn">保存调整</button>
+                <button type="button" id="reportDrawerCloseBtn">收起</button>
+              </div>
+            </div>
+            <div class="report-calibration-body" id="reportCalibrationMount"></div>
+          </aside>
         </div>
       </section>
 
@@ -430,7 +617,11 @@
             <form class="import-card" id="reviewImportForm">
               <h2>导入人才盘点结果 Excel</h2>
               <p>上传固定表头的 .xlsx 文件。后台会覆盖旧盘点文件，并自动解析成 JSON 供后续调用。</p>
-              <input id="reviewExcelInput" type="file" accept=".xlsx">
+              <div class="file-dropzone" data-file-dropzone="reviewExcelInput" tabindex="0" role="button" aria-label="拖拽或选择人才盘点结果 Excel">
+                <input id="reviewExcelInput" type="file" accept=".xlsx">
+                <span class="file-dropzone-title" data-file-dropzone-title>拖入 Excel 或点击选择</span>
+                <span class="file-dropzone-meta" data-file-dropzone-meta>仅支持 .xlsx 盘点结果文件</span>
+              </div>
               <button class="primary" type="submit">导入盘点结果</button>
               <div class="status-line" id="reviewImportStatus"></div>
               <div class="card-title-row">
@@ -443,7 +634,11 @@
             <form class="import-card" id="profileImportForm">
               <h2>导入人才档案 JSON</h2>
               <p>上传人才档案快照 JSON。不同部门文件会分表保留并合并读取；同名文件会替换旧版本。</p>
-              <input id="profileJsonInput" type="file" accept=".json,application/json">
+              <div class="file-dropzone" data-file-dropzone="profileJsonInput" tabindex="0" role="button" aria-label="拖拽或选择人才档案 JSON">
+                <input id="profileJsonInput" type="file" accept=".json,application/json">
+                <span class="file-dropzone-title" data-file-dropzone-title>拖入 JSON 或点击选择</span>
+                <span class="file-dropzone-meta" data-file-dropzone-meta>支持人才档案快照 JSON</span>
+              </div>
               <button class="primary" type="submit">导入人才档案</button>
               <div class="status-line" id="profileImportStatus"></div>
               <div class="card-title-row">
@@ -457,7 +652,11 @@
             <form class="import-card" id="employeeRosterImportForm">
               <h2>导入全部人员 Excel</h2>
               <p>上传人员信息导出的 Excel，用于补充直线经理、序列、职务等字段；可一次选择多个 Excel 合并识别。</p>
-              <input id="employeeRosterExcelInput" type="file" accept=".xlsx" multiple>
+              <div class="file-dropzone" data-file-dropzone="employeeRosterExcelInput" tabindex="0" role="button" aria-label="拖拽或选择全部人员 Excel">
+                <input id="employeeRosterExcelInput" type="file" accept=".xlsx" multiple>
+                <span class="file-dropzone-title" data-file-dropzone-title>拖入一个或多个 Excel</span>
+                <span class="file-dropzone-meta" data-file-dropzone-meta>支持多文件合并导入</span>
+              </div>
               <button class="primary" type="submit">导入员工关系</button>
               <div class="status-line" id="employeeRosterImportStatus"></div>
               <div class="card-title-row">
@@ -801,7 +1000,7 @@
                 </div>
                 <div class="field">
                   <label for="homeMemoTextInput">备忘记录</label>
-                  <textarea id="homeMemoTextInput" placeholder="例如：先确认校准差异人员，再用 AI 问答收敛报告主线。"></textarea>
+                  <textarea id="homeMemoTextInput" placeholder="今日暂无备忘！"></textarea>
                 </div>
                 <div class="form-actions">
                   <button class="primary" type="submit">保存备忘</button>
@@ -867,6 +1066,37 @@
               </div>
               </form>
             </details>
+            <details class="settings-section" open>
+              <summary>
+                <div class="settings-summary-title">
+                  <h2>应用更新</h2>
+                  <p>从企业微信网盘同步目录或可直接访问的 release.json URL 读取发布清单，保留本机数据并更新程序。</p>
+                </div>
+                <span class="settings-summary-icon" aria-hidden="true">⌄</span>
+              </summary>
+              <form class="settings-section-body update-settings-card" id="appUpdateForm">
+                <div class="settings-grid">
+                  <div class="field update-source-field">
+                    <label for="updateSourcePathInput">共享盘更新目录 / release.json URL</label>
+                    <input id="updateSourcePathInput" class="query-input" placeholder="例如 D:\企业微信网盘\HROBOT-release 或 https://.../release.json">
+                    <p class="field-help">本地目录内需包含 release.json 和 hrobot-win-版本号.exe；URL 必须直接返回 release.json，网页分享页通常不能自动下载。</p>
+                  </div>
+                </div>
+                <div class="server-status-grid update-status-grid">
+                  <div><span>当前版本</span><strong id="currentAppVersion">-</strong></div>
+                  <div><span>最新版本</span><strong id="latestAppVersion">-</strong></div>
+                  <div><span>安装包</span><strong id="latestInstallerName">-</strong></div>
+                  <div><span>检查时间</span><strong id="updateCheckedAt">-</strong></div>
+                </div>
+                <div class="update-notes" id="updateInstallDirectory">备注：文件默认安装目录：%LOCALAPPDATA%\Hrobot</div>
+                <div class="form-actions">
+                  <button class="primary" type="submit">保存更新源</button>
+                  <button type="button" id="checkAppUpdateBtn">检查更新</button>
+                  <button type="button" id="installAppUpdateBtn" disabled>下载并更新</button>
+                  <span class="status-line" id="appUpdateStatus"></span>
+                </div>
+              </form>
+            </details>
             <section class="settings-section server-status-card" aria-label="服务器状态">
               <div class="server-status-main">
                 <div class="settings-summary-title">
@@ -893,8 +1123,8 @@
     </main>
   </div>
 
-  <script src="static/modules/talent-review/talent-review.js"></script>
-  <script src="static/js/app.js"></script>
+  <script src="static/modules/talent-review/talent-review.js?v=20260616-report-ppt-pool"></script>
+  <script src="static/js/app.js?v=20260618-report-asset-select"></script>
 
 </body>
 </html>

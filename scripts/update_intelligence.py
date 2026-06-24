@@ -18,6 +18,7 @@ import html
 import importlib.util
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -36,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_FILE = ROOT / "data" / "intelligence.json"
 HISTORY_FILE = ROOT / "data" / "intelligence_history.json"
 AI_CONFIG_FILE = ROOT / "data" / "ai_config.json"
+AI_SECRETS_FILE = ROOT / "data" / "local_ai_secrets.json"
 TIMEZONE = dt.timezone(dt.timedelta(hours=8))
 WECHAT_ARTICLES_SKILL = Path.home() / ".workbuddy" / "skills" / "wechat-articles"
 
@@ -564,9 +566,11 @@ def fetch_wechat_articles(
 
 def load_ai_config() -> tuple[str, str, str]:
     cfg = read_json(AI_CONFIG_FILE, {})
+    secrets = read_json(AI_SECRETS_FILE, {}) if AI_SECRETS_FILE.exists() else {}
     multimodal = cfg.get("multimodal", {}) if isinstance(cfg.get("multimodal", {}), dict) else {}
+    multimodal_secret = secrets.get("multimodal", {}) if isinstance(secrets.get("multimodal", {}), dict) else {}
     return (
-        multimodal.get("apiKey", "") or cfg.get("apiKey", ""),
+        os.environ.get("HROBOT_AI_API_KEY") or multimodal_secret.get("apiKey", "") or secrets.get("apiKey", "") or multimodal.get("apiKey", "") or cfg.get("apiKey", ""),
         multimodal.get("baseUrl", "") or cfg.get("baseUrl", "https://api.openai.com/v1"),
         multimodal.get("model", "") or cfg.get("model", "gpt-4o-mini"),
     )
