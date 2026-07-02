@@ -79,6 +79,16 @@ SERVER_PORT = 8767
 SERVER_ALLOW_REMOTE_CLIENTS = False
 DEFAULT_APP_VERSION = "0.1.0"
 APP_VERSION_PATH = ROOT / "app_version.json"
+GITHUB_RELEASE_PAGE_URL = "https://github.com/lllzccc/HRobot/releases/latest"
+GITHUB_RELEASE_API_URL = "https://api.github.com/repos/lllzccc/HRobot/releases/latest"
+
+
+def app_platform():
+    if sys.platform == "darwin":
+        return "mac"
+    if os.name == "nt":
+        return "windows"
+    return "linux"
 
 
 def app_version_payload():
@@ -1909,6 +1919,94 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
         except json.JSONDecodeError as error:
             raise ValueError(f"更新源不是有效 JSON：{error}") from error
 
+    def _github_release_api_url(self, source):
+        source = str(source or "").strip()
+        if not source:
+            return GITHUB_RELEASE_API_URL
+        parsed = urlparse(source)
+        if parsed.netloc.lower() == "api.github.com":
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) >= 4 and parts[0] == "repos" and parts[3] == "releases":
+                return source
+        if parsed.netloc.lower() != "github.com":
+            return ""
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 4 and parts[2] == "releases":
+            owner, repo = parts[0], parts[1]
+            tag = parts[3] if parts[3] != "latest" else "latest"
+            if tag == "latest":
+                return f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+            return f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{quote(tag)}"
+        if len(parts) >= 2:
+            return f"https://api.github.com/repos/{parts[0]}/{parts[1]}/releases/latest"
+        return ""
+
+    def _asset_platform(self, asset_name):
+        name = str(asset_name or "").lower()
+        if not name:
+            return ""
+        if name.endswith(".exe") or "win" in name or "windows" in name:
+            return "windows"
+        if "mac" in name or "darwin" in name or name.endswith(".dmg"):
+            return "mac"
+        return ""
+
+    def _asset_score_for_platform(self, asset, platform):
+        name = str(asset.get("name") or "")
+        lower = name.lower()
+        score = 0
+        if self._asset_platform(name) == platform:
+            score += 100
+        if platform == "windows" and lower.endswith(".exe"):
+            score += 40
+        if platform == "mac" and lower.endswith(".zip"):
+            score += 30
+        if "source code" in lower:
+            score -= 100
+        if lower.startswith("hrobot"):
+            score += 10
+        return score
+
+    def _github_release_to_update_release(self, release):
+        if not isinstance(release, dict):
+            raise ValueError("GitHub Release returned an invalid payload.")
+        version = str(release.get("tag_name") or release.get("name") or "").strip().lstrip("vV")
+        assets = release.get("assets") if isinstance(release.get("assets"), list) else []
+        platform = app_platform()
+        candidates = [
+            asset for asset in assets
+            if isinstance(asset, dict)
+            and asset.get("browser_download_url")
+            and self._asset_score_for_platform(asset, platform) > 0
+        ]
+        selected = max(candidates, key=lambda item: self._asset_score_for_platform(item, platform), default=None)
+        package_map = {}
+        for asset in assets:
+            if not isinstance(asset, dict) or not asset.get("browser_download_url"):
+                continue
+            asset_platform = self._asset_platform(asset.get("name"))
+            if asset_platform:
+                package_map[asset_platform] = {
+                    "name": str(asset.get("name") or ""),
+                    "url": str(asset.get("browser_download_url") or ""),
+                }
+        if not version:
+            raise ValueError("GitHub Release is missing a version tag.")
+        if not selected:
+            available = ", ".join(str(asset.get("name") or "") for asset in assets if isinstance(asset, dict) and asset.get("name"))
+            raise ValueError(f"No release asset is available for {platform}. Assets: {available or 'none'}")
+        return {
+            "app": "Hrobot",
+            "version": version,
+            "installer": str(selected.get("name") or "HrobotSetup.exe"),
+            "installerUrl": str(selected.get("browser_download_url") or ""),
+            "notes": str(release.get("body") or ""),
+            "publishedAt": str(release.get("published_at") or ""),
+            "releasePage": str(release.get("html_url") or GITHUB_RELEASE_PAGE_URL),
+            "sourceKind": "github",
+            "packages": package_map,
+        }
+
     def _download_update_url(self, url, destination: Path):
         request = Request(url, headers={"User-Agent": "Hrobot-Updater/0.1"})
         with urlopen(request, timeout=120) as response:
@@ -1919,6 +2017,9 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
 
     def _update_manifest_path(self, source_path=""):
         configured = str(source_path or self.update_config().get("sourcePath") or "").strip().strip('"')
+        github_api = self._github_release_api_url(configured)
+        if not configured or github_api:
+            return github_api or GITHUB_RELEASE_API_URL
         if not configured:
             raise ValueError("请先填写企业微信网盘同步目录或 release.json 路径。")
         if self._is_update_url(configured):
@@ -1938,9 +2039,12 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
         release = self._read_update_url_json(manifest_ref) if is_url else self._read_json(manifest_ref, {})
         if not isinstance(release, dict):
             raise ValueError("release.json 格式不正确。")
+        if self._github_release_api_url(manifest_ref):
+            release = self._github_release_to_update_release(release)
         version = str(release.get("version") or "").strip()
         installer_name = str(
-            release.get("installer")
+            release.get("installerUrl")
+            or release.get("installer")
             or release.get("file")
             or release.get("package")
             or "HrobotSetup.exe"
@@ -1959,7 +2063,7 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
                 installer_ref = manifest_ref.parent / installer_ref
             installer_suffix = installer_ref.suffix.lower()
             manifest_parent = str(manifest_ref.parent)
-        if installer_suffix != ".exe":
+        if app_platform() == "windows" and installer_suffix != ".exe":
             raise ValueError("当前 Windows 更新只支持 .exe 安装包。")
         current = app_version_payload()
         return {
@@ -1971,10 +2075,14 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
                 "installerSourceType": "url" if is_url else "file",
                 "notes": str(release.get("notes") or release.get("changelog") or ""),
                 "publishedAt": str(release.get("publishedAt") or ""),
+                "releasePage": str(release.get("releasePage") or GITHUB_RELEASE_PAGE_URL),
+                "platform": app_platform(),
+                "canAutoInstall": app_platform() == "windows" and installer_suffix == ".exe",
             },
             "manifestPath": str(manifest_ref),
-            "sourcePath": manifest_parent,
-            "sourceType": "url" if is_url else "file",
+            "sourcePath": str(release.get("releasePage") or GITHUB_RELEASE_PAGE_URL) if release.get("sourceKind") == "github" else manifest_parent,
+            "sourceType": "github" if release.get("sourceKind") == "github" else ("url" if is_url else "file"),
+            "packages": release.get("packages") if isinstance(release.get("packages"), dict) else {},
             "updateAvailable": is_newer_version(version, current["version"]),
         }
 
@@ -1984,13 +2092,27 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
             "app": app_version_payload(),
             "config": config,
             "checkedAt": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
-            "configured": bool(config.get("sourcePath")),
+            "configured": True,
+            "releasePage": GITHUB_RELEASE_PAGE_URL,
             "updateAvailable": False,
         }
-        source = source_path or config.get("sourcePath") or ""
-        if not source:
-            return payload
-        release = self._read_update_release(source)
+        source = source_path or GITHUB_RELEASE_PAGE_URL
+        try:
+            release = self._read_update_release(source)
+        except HTTPError as error:
+            if self._github_release_api_url(source) and error.code == 404:
+                return {
+                    **payload,
+                    "noRelease": True,
+                    "sourcePath": GITHUB_RELEASE_PAGE_URL,
+                    "sourceType": "github",
+                    "latest": {
+                        "releasePage": GITHUB_RELEASE_PAGE_URL,
+                        "platform": app_platform(),
+                        "notes": "",
+                    },
+                }
+            raise
         return {**payload, **release, "configured": True}
 
     def install_update(self, source_path=""):
@@ -1999,6 +2121,8 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
         installer_path = Path(latest.get("installerPath") or "")
         if not status.get("updateAvailable"):
             return {**status, "started": False, "message": "当前已经是最新版本。"}
+        if not latest.get("canAutoInstall"):
+            return {**status, "started": False, "message": "当前系统不支持自动覆盖安装，请打开 GitHub Release 下载对应版本。"}
         source_type = latest.get("installerSourceType") or "file"
         if source_type == "file" and not installer_path.exists():
             raise FileNotFoundError(f"未找到安装包：{installer_path}")
@@ -3326,6 +3450,94 @@ class Handler(SimpleHTTPRequestHandler):
                 )
         return {"configured": True, "message": "模型连续调用工具但未生成最终回复，请缩小问题范围后重试。"}
 
+    def _build_intelligence_key_summary(self, query):
+        channel = self.store._first_query_value(query, "channel")
+        if channel not in {"", "ai_hr", "game_org"}:
+            channel = ""
+        history_payload = self.store._read_intelligence_file(self.store.intelligence_history_path)
+        current_payload = self.store._read_intelligence_file(self.store.intelligence_path)
+        items = history_payload["items"] or current_payload["items"]
+        items = [item for item in items if isinstance(item, dict)]
+        if channel:
+            items = [item for item in items if item.get("channel") == channel]
+
+        def item_date(item):
+            raw = str(item.get("published_at") or item.get("collected_at") or "")[:10]
+            try:
+                return datetime.fromisoformat(raw).date()
+            except (TypeError, ValueError):
+                return None
+
+        dated_items = [(item, item_date(item)) for item in items]
+        dated_items = [(item, date_value) for item, date_value in dated_items if date_value]
+        if not dated_items:
+            return {
+                "ok": True,
+                "configured": True,
+                "message": "暂无可用于分析的上周情报。",
+                "item_count": 0,
+                "date_range": "",
+            }
+
+        latest_date = max(date_value for _, date_value in dated_items)
+        start_date = latest_date - timedelta(days=6)
+        week_items = [
+            item for item, date_value in dated_items
+            if start_date <= date_value <= latest_date
+        ]
+        week_items.sort(
+            key=lambda item: (
+                int(item.get("importance") or 0),
+                str(item.get("published_at") or ""),
+            ),
+            reverse=True,
+        )
+        compact_items = [
+            {
+                "channel": item.get("channel", ""),
+                "date": item.get("published_at", ""),
+                "source": item.get("source", ""),
+                "title": item.get("title", ""),
+                "summary": item.get("summary", ""),
+                "hrbp_takeaway": item.get("hrbp_takeaway", ""),
+                "importance": item.get("importance", ""),
+                "confidence": item.get("confidence", ""),
+                "keywords": item.get("keywords", [])[:5] if isinstance(item.get("keywords"), list) else [],
+            }
+            for item in week_items[:30]
+        ]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是资深 HRBP 情报分析师，擅长把一周新闻提炼成可供 HRBP 判断的关键信号。"
+                    "不要复述新闻列表，不要逐条改写标题；要给出分析结论、趋势判断和对组织人才工作的含义。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"请基于以下 {len(compact_items)} 条情报，总结 {start_date.isoformat()} 至 {latest_date.isoformat()} 的关键情报。\n"
+                    "输出要求：\n"
+                    "1. 先用一句话给出本周总判断。\n"
+                    "2. 给出 3-5 条关键信号，每条包含：结论、依据、HRBP 含义。\n"
+                    "3. 最后给出 2 个下周应继续观察的问题。\n"
+                    "4. 使用简洁中文，可以用项目符号；不要输出 JSON，不要写空泛套话，总长度控制在 600 字以内。\n\n"
+                    f"{json.dumps(compact_items, ensure_ascii=False)}"
+                ),
+            },
+        ]
+        result = self._call_ai_model(messages, timeout=60)
+        return {
+            "ok": not bool(result.get("error")),
+            "configured": result.get("configured", True),
+            "message": result.get("message", ""),
+            "error": result.get("error", ""),
+            "item_count": len(compact_items),
+            "date_range": f"{start_date.isoformat()} 至 {latest_date.isoformat()}",
+            "generated_at": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+        }
+
     def _call_image_model(self, prompt, size="1024x1024"):
         config = self.store.ai_config()["image"]
         if not (config.get("apiKey") and config.get("baseUrl") and config.get("model")):
@@ -3566,7 +3778,8 @@ class Handler(SimpleHTTPRequestHandler):
                     {
                         "app": app_version_payload(),
                         "config": self.store.update_config(),
-                        "configured": bool(self.store.update_config().get("sourcePath")),
+                        "configured": True,
+                        "releasePage": GITHUB_RELEASE_PAGE_URL,
                         "updateAvailable": False,
                         "error": str(error),
                     },
@@ -3575,6 +3788,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/home-memos":
             self._send_json(self.store.home_memos())
+            return
+        if path == "/api/intelligence/key-summary":
+            self._send_json(self._build_intelligence_key_summary(query))
             return
         if path == "/api/intelligence":
             self._send_json(self.store.intelligence(query))

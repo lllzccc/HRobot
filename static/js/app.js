@@ -1,4 +1,4 @@
-    const gridDefs = [
+﻿    const gridDefs = [
       { id: 6, name: "熟练员工", perf: "高", potential: "低", band: "blue", ratio: 10, hint: "技术专家或“有资源”的人才，绩效优秀，但潜力已接近天花板" },
       { id: 8, name: "绩效之星", perf: "高", potential: "中", band: "orange", ratio: 10, hint: "业务支柱，绩效稳定突出但潜力中等，是岗位专家型人才" },
       { id: 9, name: "超级明星", perf: "高", potential: "高", band: "orange", ratio: 5, hint: "组织最核心的人才，绩效突出且具备快速成长与晋升到更高层级的潜力" },
@@ -27,6 +27,7 @@
     let editingTalentPoolName = "";
     let generatedReports = [];
     let agentCenterProjects = [];
+    let latestAppUpdatePayload = null;
     let currentReportId = "";
     let currentReportDetail = null;
     let currentReportView = "md";
@@ -486,9 +487,30 @@
       }
     }
 
+    function selectSettingsPanel(target, options = {}) {
+      const key = String(target || "data");
+      const layout = document.querySelector("[data-settings-tabs]");
+      if (!layout) return;
+      const buttons = [...layout.querySelectorAll("[data-settings-target]")];
+      const panels = [...layout.querySelectorAll("[data-settings-panel]")];
+      const matchedPanel = panels.find(panel => panel.dataset.settingsPanel === key) || panels[0];
+      const activeKey = matchedPanel?.dataset.settingsPanel || "data";
+      buttons.forEach(button => {
+        button.classList.toggle("active", button.dataset.settingsTarget === activeKey);
+      });
+      panels.forEach(panel => {
+        const active = panel.dataset.settingsPanel === activeKey;
+        panel.classList.toggle("active", active);
+        if (panel.tagName === "DETAILS") panel.open = active;
+      });
+      if (options.scroll !== false) {
+        const banner = layout.closest(".page-shell")?.querySelector(".page-banner");
+        (banner || layout).scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    }
+
     function renderAgentProjectCard(project) {
       const analysis = project.analysis || {};
-      const environment = project.environment || {};
       const isBuiltIn = Boolean(project.builtIn);
       const runtimeNames = {
         "python-server": "Python 服务",
@@ -502,34 +524,16 @@
       const runtimeLabel = analysis.runtimeLabel || runtimeNames[project.runtime] || "待确认结构";
       const description = project.description
         || (project.runtime && project.runtime !== "static-web" ? "带独立后端的数据型 Web 功能，点击后启动自己的本地服务。" : "独立打包的前端页面，点击后直接打开正式功能。");
-      const fileText = isBuiltIn ? "HRobot 内置" : `${Number(project.fileCount) || 0} 个文件`;
-      const confidence = Number(analysis.confidence || 0);
-      const confidenceText = confidence ? `识别 ${Math.round(confidence * 100)}%` : "未识别";
-      const installText = isBuiltIn ? "无需上传" : (analysis.requiresInstall ? "需安装依赖" : (analysis.source === "rules+ai" ? "AI 已辅助" : "规则扫描"));
-      const environmentOk = environment.canOpen !== false;
-      const environmentLabel = environment.label || (environmentOk ? "本机可打开" : "本机缺环境");
-      const environmentMessage = environment.message || "";
-      const environmentClass = environmentOk ? "ready" : "blocked";
-      const openLabel = isBuiltIn ? "打开汇报" : (environmentOk ? "打开功能" : "查看环境");
+      const iconText = isBuiltIn ? "盘" : (project.runtime === "static-web" ? "页" : (String(runtimeLabel).includes("Python") ? "Py" : (String(runtimeLabel).includes("Node") || String(runtimeLabel).includes("Vite") || String(runtimeLabel).includes("Next") ? "JS" : "AI")));
       return `
         <article class="agent-project-card" data-agent-project-open="${escapeHtml(project.id || "")}" data-agent-project-id="${escapeHtml(project.id || "")}" title="打开正式页面">
-          ${isBuiltIn ? "" : `<button class="agent-project-delete" type="button" data-agent-project-delete="${escapeHtml(project.id || "")}" title="删除">×</button>`}
-          <div class="agent-project-kicker">${escapeHtml(runtimeLabel)}</div>
-          <h3>${escapeHtml(project.name || "未命名 Web 项目")}</h3>
-          <p class="agent-project-desc">${escapeHtml(description)}</p>
-          <div class="agent-project-env ${environmentClass}" title="${escapeHtml(environmentMessage)}">
-            <span>${escapeHtml(environmentLabel)}</span>
-            <strong>${escapeHtml(environmentMessage || (environmentOk ? "运行环境检查通过。" : "运行环境检查未通过。"))}</strong>
+          <div class="agent-project-card-head">
+            <span class="agent-project-icon" aria-hidden="true">${escapeHtml(iconText)}</span>
+            <button class="agent-project-open-button" type="button" data-agent-project-open="${escapeHtml(project.id || "")}">Open</button>
           </div>
-          <div class="agent-project-meta">
-            <span>${escapeHtml(fileText)}</span>
-            <span>${escapeHtml(formatFileSize(project.size || 0))}</span>
-            <span>${escapeHtml(confidenceText)}</span>
-            <span>${escapeHtml(installText)}</span>
-          </div>
-          <div class="agent-project-actions">
-            ${isBuiltIn ? "" : `<button type="button" data-agent-project-analyze="${escapeHtml(project.id || "")}">重新分析</button>`}
-            <span class="agent-project-openline"><span>${escapeHtml(openLabel)}</span><span aria-hidden="true">→</span></span>
+          <div class="agent-project-text">
+            <h3>${escapeHtml(project.name || "未命名 Web 项目")}</h3>
+            <p class="agent-project-desc">${escapeHtml(description)}</p>
           </div>
         </article>
       `;
@@ -547,9 +551,6 @@
     function renderAgentProjects(payload = {}) {
       agentCenterProjects = Array.isArray(payload.projects) ? payload.projects : agentCenterProjects;
       const visibleProjects = [...builtInAgentProjects, ...agentCenterProjects];
-      const totalFiles = agentCenterProjects.reduce((sum, item) => sum + (Number(item.fileCount) || 0), 0);
-      const totalSize = agentCenterProjects.reduce((sum, item) => sum + (Number(item.size) || 0), 0);
-      if ($("agentProjectListCount")) $("agentProjectListCount").textContent = `${visibleProjects.length} 个`;
       if ($("agentProjectGrid")) {
         $("agentProjectGrid").innerHTML = `${visibleProjects.map(renderAgentProjectCard).join("")}${renderAgentProjectAddCard()}`;
       }
@@ -560,7 +561,7 @@
       const payload = await response.json();
       if (!response.ok || payload.error) throw new Error(payload.error || "Agent 中心加载失败");
       renderAgentProjects(payload);
-      if ($("agentProjectStatus")) $("agentProjectStatus").textContent = payload.updatedAt ? `最后更新：${formatFileTime(payload.updatedAt)}` : "等待上传或投放 zip。";
+      if ($("agentProjectStatus")) $("agentProjectStatus").textContent = payload.updatedAt ? `Agent 项目已更新：${formatFileTime(payload.updatedAt)}` : "等待上传或投放 zip。";
       return payload;
     }
 
@@ -713,7 +714,7 @@
     function appendAiMessage(role, content, extraHtml = "") {
       const log = $("aiChatLog");
       if (!log) return;
-      const label = role === "user" ? "你" : "AI 分析助手";
+      const label = role === "user" ? "你" : "HRobot";
       log.insertAdjacentHTML("beforeend", `
         <article class="chat-message ${role}">
           <div class="chat-role">${label}</div>
@@ -752,42 +753,68 @@
         list.innerHTML = `<div class="memo-record-item"><span class="memo-record-date">扫描结果</span><span class="memo-record-text">暂未发现可识别的数据文件。</span></div>`;
         return;
       }
-      const blocks = [];
-      if (payload.aiSummary) {
-        blocks.push(`
-          <div class="memo-record-item">
-            <span class="memo-record-date">AI 总结</span>
-            <span class="memo-record-text">${escapeHtml(payload.aiSummary)}</span>
-          </div>
-        `);
-      } else if (summary.overview) {
-        blocks.push(`
-          <div class="memo-record-item">
-            <span class="memo-record-date">总体判断</span>
-            <span class="memo-record-text">${escapeHtml(summary.overview)}</span>
-          </div>
-        `);
-      }
-      const typeText = (summary.typeBreakdown || [])
+      const clipText = (value, limit = 64) => {
+        const text = String(value || "").replace(/\s+/g, " ").trim();
+        return text.length > limit ? `${text.slice(0, limit)}...` : text;
+      };
+      const topItems = (items = [], limit = 3, textLimit = 44) => items
+        .filter(Boolean)
+        .slice(0, limit)
+        .map(item => clipText(item, textLimit));
+      const typeBreakdown = (summary.typeBreakdown || []).filter(item => item.count);
+      const typeText = typeBreakdown
         .filter(item => item.count)
         .map(item => `${item.label} ${item.count} 个`)
         .join("；");
-      if (typeText) {
-        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">内容概况</span><span class="memo-record-text">${escapeHtml(typeText)}</span></div>`);
-      }
-      if ((summary.analysisOpportunities || []).length) {
-        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">可做分析</span><span class="memo-record-text">${escapeHtml(summary.analysisOpportunities.join("；"))}</span></div>`);
-      }
-      if ((summary.structureIssues || []).length) {
-        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">结构问题</span><span class="memo-record-text">${escapeHtml(summary.structureIssues.join("；"))}</span></div>`);
-      }
-      if ((summary.recommendations || []).length) {
-        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">建议项</span><span class="memo-record-text">${escapeHtml(summary.recommendations.join("；"))}</span></div>`);
-      }
-      if ((summary.topFolders || []).length) {
-        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">目录分布</span><span class="memo-record-text">${escapeHtml(summary.topFolders.join("；"))}</span></div>`);
-      }
-      list.innerHTML = blocks.join("");
+      const typeChips = typeBreakdown.slice(0, 5).map(item => `<span>${escapeHtml(item.label)} ${item.count}</span>`).join("");
+      const knownCount = Object.entries(summary.typeCounts || {})
+        .filter(([type]) => type !== "unknown")
+        .reduce((sum, [, count]) => sum + Number(count || 0), 0);
+      const unknownCount = Number(summary.typeCounts?.unknown || 0);
+      const overview = `发现 ${payload.fileCount || 0} 个可用数据文件，${knownCount || 0} 个已初步归类${unknownCount ? `，${unknownCount} 个待确认` : ""}。`;
+      const contentLine = topItems(typeBreakdown.map(item => `${item.label} ${item.count} 个`), 4, 24).join("、") || "暂未形成稳定分类";
+      const analysisLine = topItems(summary.analysisOpportunities || [], 2).join("；") || "可先确认文件类型和字段映射。";
+      const issueLine = topItems(summary.structureIssues || [], 1).join("") || "未发现明显结构问题。";
+      const detailRows = [
+        ["内容概况", typeText],
+        ["可做分析", (summary.analysisOpportunities || []).join("；")],
+        ["结构问题", (summary.structureIssues || []).join("；")],
+        ["建议项", (summary.recommendations || []).join("；")],
+        ["目录分布", (summary.topFolders || []).join("；")]
+      ].filter(([, text]) => text);
+      list.innerHTML = `
+        <section class="scan-summary-card" aria-label="本地数据扫描概况">
+          <div class="scan-summary-main">
+            <span>扫描概况</span>
+            <strong>${escapeHtml(overview)}</strong>
+          </div>
+          <div class="scan-summary-grid">
+            <div>
+              <span>主要内容</span>
+              <strong>${escapeHtml(contentLine)}</strong>
+              <div class="scan-summary-chips">${typeChips}</div>
+            </div>
+            <div>
+              <span>可用于</span>
+              <strong>${escapeHtml(analysisLine)}</strong>
+            </div>
+            <div>
+              <span>需关注</span>
+              <strong>${escapeHtml(issueLine)}</strong>
+            </div>
+          </div>
+          ${detailRows.length ? `
+            <details class="scan-summary-detail">
+              <summary>查看扫描细节</summary>
+              <div>
+                ${detailRows.map(([label, text]) => `
+                  <p><b>${escapeHtml(label)}</b><span>${escapeHtml(text)}</span></p>
+                `).join("")}
+              </div>
+            </details>
+          ` : ""}
+        </section>
+      `;
     }
 
     async function loadDataSourceConfig() {
@@ -931,6 +958,7 @@
     }
 
     function setAppUpdateDisplay(payload = {}) {
+      latestAppUpdatePayload = payload;
       const app = payload.app || {};
       const latest = payload.latest || {};
       const config = payload.config || {};
@@ -938,19 +966,25 @@
       if ($("latestAppVersion")) $("latestAppVersion").textContent = latest.version || "-";
       if ($("latestInstallerName")) $("latestInstallerName").textContent = latest.installer || "-";
       if ($("updateCheckedAt")) $("updateCheckedAt").textContent = formatFileTime(payload.checkedAt || "");
-      if ($("updateSourcePathInput") && config.sourcePath !== undefined) $("updateSourcePathInput").value = config.sourcePath || "";
+      const releasePage = latest.releasePage || payload.sourcePath || payload.releasePage || "https://github.com/lllzccc/HRobot/releases/latest";
+      if ($("updateReleaseLink")) $("updateReleaseLink").href = releasePage;
+      if ($("updateSourceLabel")) $("updateSourceLabel").textContent = payload.sourceType === "github" ? "GitHub Release" : (payload.sourcePath || "GitHub Release");
       if ($("updateInstallDirectory")) {
-        $("updateInstallDirectory").textContent = `备注：文件默认安装目录：${app.installDir || "%LOCALAPPDATA%\\Hrobot"}`;
+        const platformText = latest.platform === "mac" ? "macOS 源码包" : latest.platform === "windows" ? "Windows 安装包" : "当前系统安装包";
+        $("updateInstallDirectory").textContent = `备注：当前会匹配 ${platformText}；Windows 默认安装目录：${app.installDir || "%LOCALAPPDATA%\\Hrobot"}。`;
       }
-      if ($("installAppUpdateBtn")) $("installAppUpdateBtn").disabled = !payload.updateAvailable;
+      if ($("showUpdateNotesBtn")) $("showUpdateNotesBtn").disabled = false;
+      if ($("installAppUpdateBtn")) $("installAppUpdateBtn").disabled = !(payload.updateAvailable && latest.canAutoInstall);
       if ($("appUpdateStatus")) {
         $("appUpdateStatus").textContent = payload.error
           ? `检查失败：${payload.error}`
+          : payload.noRelease
+            ? "GitHub 还没有创建正式 Release。"
           : payload.updateAvailable
             ? `发现新版本 ${latest.version}。`
             : payload.configured
               ? "当前已是最新版本。"
-              : "请先配置更新源。";
+              : "正在等待 GitHub Release 信息。";
       }
     }
 
@@ -963,29 +997,16 @@
       return payload;
     }
 
-    async function saveAppUpdateConfig(event) {
-      event.preventDefault();
-      const sourcePath = $("updateSourcePathInput")?.value.trim() || "";
-      const response = await fetch("/api/app/update/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourcePath })
-      });
-      const payload = await response.json();
-      if (!response.ok || payload.error) throw new Error(payload.error || "更新源保存失败");
-      await loadAppUpdateStatus({ message: "更新源已保存，正在检查版本。" });
-    }
-
     async function checkAppUpdate() {
       const button = $("checkAppUpdateBtn");
       const status = $("appUpdateStatus");
       if (button) button.disabled = true;
-      if (status) status.textContent = "正在检查共享盘版本。";
+      if (status) status.textContent = "正在检查 GitHub Release。";
       try {
         const response = await fetch("/api/app/update/check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sourcePath: $("updateSourcePathInput")?.value.trim() || "" })
+          body: JSON.stringify({})
         });
         const payload = await response.json();
         setAppUpdateDisplay(payload);
@@ -998,16 +1019,16 @@
     }
 
     async function installAppUpdate() {
-      if (!confirm("确认下载并启动更新安装包吗？更新会替换程序文件，但会保留本机数据、设置、备忘录、人才池、落格结果、设计输出和 AI 上下文。")) return;
+      if (!confirm("确认下载并启动更新安装包吗？Windows 安装器会覆盖程序文件、保留本机数据，并在安装后重新启动 HRobot。")) return;
       const button = $("installAppUpdateBtn");
       const status = $("appUpdateStatus");
       if (button) button.disabled = true;
-      if (status) status.textContent = "正在复制安装包并启动更新。";
+      if (status) status.textContent = "正在下载安装包并启动自动更新。";
       try {
         const response = await fetch("/api/app/update/install", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sourcePath: $("updateSourcePathInput")?.value.trim() || "" })
+          body: JSON.stringify({})
         });
         const payload = await response.json();
         if (!response.ok || payload.error) throw new Error(payload.error || "启动更新失败");
@@ -1016,6 +1037,26 @@
       } catch (error) {
         if (status) status.textContent = `启动更新失败：${error.message}`;
         if (button) button.disabled = false;
+      }
+    }
+
+    function showUpdateNotes() {
+      const dialog = $("updateNotesDialog");
+      const latest = latestAppUpdatePayload?.latest || {};
+      if (!dialog) return;
+      if ($("updateNotesDialogTitle")) $("updateNotesDialogTitle").textContent = latest.version ? `版本说明 v${latest.version}` : "版本说明";
+      if ($("updateNotesDialogMeta")) {
+        $("updateNotesDialogMeta").textContent = [latest.installer, latest.publishedAt ? formatFileTime(latest.publishedAt) : ""].filter(Boolean).join(" · ") || "GitHub Release";
+      }
+      if ($("updateNotesDialogBody")) {
+        $("updateNotesDialogBody").textContent = latestAppUpdatePayload?.noRelease
+          ? "GitHub 还没有创建正式 Release。发布第一个 Release 后，这里会显示该版本的更新说明。"
+          : latest.notes || "这个 Release 暂无版本说明。";
+      }
+      if (typeof dialog.showModal === "function") {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute("open", "");
       }
     }
 
@@ -1079,6 +1120,7 @@
 
     let activeIntelligenceChannel = "";
     let intelligenceItems = [];
+    let keyIntelligenceRequestId = 0;
 
     function intelligenceCard(item) {
       const keywords = Array.isArray(item.keywords) ? item.keywords.slice(0, 3) : [];
@@ -1101,6 +1143,41 @@
           </div>
         </article>
       `;
+    }
+
+    function renderKeyIntelligenceSummary(text) {
+      const lines = String(text || "").split(/\n+/).map(line => line.trim().replace(/\*\*/g, "")).filter(Boolean);
+      $("keyIntelligenceList").innerHTML = lines.length
+        ? `<div class="key-intelligence-summary">${lines.map(line => `<p>${escapeHtml(line)}</p>`).join("")}</div>`
+        : `<div class="empty-report">暂无关键情报分析。</div>`;
+    }
+
+    async function loadKeyIntelligenceSummary() {
+      const requestId = ++keyIntelligenceRequestId;
+      const status = $("keyIntelligenceStatus");
+      const list = $("keyIntelligenceList");
+      if (status) status.textContent = "正在分析上周新闻";
+      if (list) list.innerHTML = `<div class="empty-report">正在生成关键情报分析...</div>`;
+      const params = new URLSearchParams();
+      if (activeIntelligenceChannel) params.set("channel", activeIntelligenceChannel);
+      const response = await fetch(params.toString() ? `/api/intelligence/key-summary?${params.toString()}` : "/api/intelligence/key-summary");
+      const payload = await response.json();
+      if (requestId !== keyIntelligenceRequestId) return;
+      if (!payload.configured) {
+        if (status) status.textContent = "模型未配置";
+        if (list) list.innerHTML = `<div class="empty-report">${escapeHtml(payload.message || "请先在设置中配置模型后生成关键情报。")}</div>`;
+        return;
+      }
+      if (!response.ok || payload.error) {
+        if (status) status.textContent = "分析失败";
+        if (list) list.innerHTML = `<div class="empty-report">${escapeHtml(payload.error || payload.message || "关键情报分析失败。")}</div>`;
+        return;
+      }
+      if (status) {
+        const countText = payload.item_count ? `${payload.item_count} 条新闻` : "暂无新闻";
+        status.textContent = payload.date_range ? `${payload.date_range} · ${countText}` : countText;
+      }
+      renderKeyIntelligenceSummary(payload.message);
     }
 
     function renderIntelligence() {
@@ -1130,6 +1207,10 @@
       intelligenceItems = Array.isArray(payload.items) ? payload.items : [];
       $("intelligenceStatus").textContent = payload.updated_at ? `最后更新：${formatFileTime(payload.updated_at)} · ${payload.count} 条` : `${payload.count || 0} 条`;
       renderIntelligence();
+      loadKeyIntelligenceSummary().catch(error => {
+        $("keyIntelligenceStatus").textContent = "分析失败";
+        $("keyIntelligenceList").innerHTML = `<div class="empty-report">关键情报分析失败：${escapeHtml(error.message)}</div>`;
+      });
     }
 
     function renderIntelligenceConfig(payload) {
@@ -1327,6 +1408,24 @@
       document.querySelectorAll("[data-ai-side-tab]").forEach(button => {
         button.classList.toggle("active", button.dataset.aiSideTab === tab);
       });
+    }
+
+    function openAiProfileFloating(profileId = "") {
+      if (profileId) activeAiProfileId = profileId;
+      renderAiProfilePanel(activeAiProfile());
+      const floating = $("aiProfileFloating");
+      if (!floating) return;
+      floating.classList.add("active");
+      floating.setAttribute("aria-hidden", "false");
+      document.body.classList.add("ai-profile-floating-open");
+    }
+
+    function closeAiProfileFloating() {
+      const floating = $("aiProfileFloating");
+      if (!floating) return;
+      floating.classList.remove("active");
+      floating.setAttribute("aria-hidden", "true");
+      document.body.classList.remove("ai-profile-floating-open");
     }
 
     function setAiProfileExpanded(expanded) {
@@ -1601,7 +1700,7 @@
           <div class="ai-artifact-main">
             <div>
               <h3 class="ai-artifact-title">${escapeHtml(aiProfileValue(info.name, "人员档案"))}的人员档案已生成</h3>
-              <p class="ai-artifact-meta">来自 HRobot MCP 人才档案，已同步到右侧档案面板。</p>
+              <p class="ai-artifact-meta">来自 HRobot MCP 人才档案，点击查看完整简历卡片。</p>
             </div>
             <div class="ai-artifact-actions">
               <button class="primary" type="button" data-ai-profile-open="${escapeHtml(profile.id)}">查看档案</button>
@@ -1646,10 +1745,9 @@
           return;
         }
         storeAiProfile(payload.profile);
-        selectAiSideTab("profile");
-        setAiProfileExpanded(true);
-        appendAiMessage("assistant", payload.message || "人员档案已生成。", renderAiProfileArtifact(payload.profile));
-        aiChatHistory.push({ role: "assistant", content: payload.message || "人员档案已生成。" });
+        const doneMessage = `${aiProfileValue(payload.profile?.basicInfo?.name || payload.profile?.name, "该人员")}的人员档案已生成，点击下方卡片可查看完整简历。`;
+        appendAiMessage("assistant", doneMessage, renderAiProfileArtifact(payload.profile));
+        aiChatHistory.push({ role: "assistant", content: doneMessage });
         setHomeCount("homeAiQuestionCount", incrementLocalCount(HOME_AI_QUESTION_COUNT_KEY));
       } catch (error) {
         const waiting = $("aiChatLog").lastElementChild;
@@ -1662,6 +1760,11 @@
 
     async function sendAiMessage(event) {
       event.preventDefault();
+      const activeMode = document.querySelector(".chat-mode-tabs button.active");
+      if (activeMode?.id === "aiPersonProfileBtn") {
+        await generatePersonProfileCard();
+        return;
+      }
       const input = $("aiChatInput");
       if (!input) return;
       const message = input.value.trim();
@@ -1685,6 +1788,36 @@
       if (response.ok && !payload.error) {
         setHomeCount("homeAiQuestionCount", incrementLocalCount(HOME_AI_QUESTION_COUNT_KEY));
       }
+    }
+
+    function activeHomeAiMode() {
+      return document.querySelector("[data-home-ai-mode].active")?.dataset.homeAiMode || "人才档案";
+    }
+
+    function syncHomeAiMode(button) {
+      if (!button) return;
+      document.querySelectorAll("[data-home-ai-mode]").forEach(item => item.classList.toggle("active", item === button));
+      if ($("homeAiModeLabel")) $("homeAiModeLabel").textContent = button.dataset.homeAiMode || "人才档案";
+    }
+
+    function submitHomeAi(event) {
+      event.preventDefault();
+      const input = $("homeAiInput");
+      const message = String(input?.value || "").trim();
+      if (!message) {
+        input?.focus();
+        return;
+      }
+      const mode = activeHomeAiMode();
+      switchPage(4);
+      if ($("aiChatInput")) $("aiChatInput").value = message;
+      window.setTimeout(() => {
+        if (mode === "人才档案") {
+          generatePersonProfileCard(message);
+        } else {
+          $("aiChatForm")?.requestSubmit();
+        }
+      }, 0);
     }
 
     function reportMarkdownToHtml(content) {
@@ -2803,14 +2936,21 @@ body.static-talent-report {
       });
     });
     $("refreshServerStatusBtn").addEventListener("click", () => loadServerStatus().catch(() => {}));
-    $("restartServerBtn").addEventListener("click", restartServer);
-    $("appUpdateForm")?.addEventListener("submit", event => {
-      saveAppUpdateConfig(event).catch(error => {
-        if ($("appUpdateStatus")) $("appUpdateStatus").textContent = `保存失败：${error.message}`;
-      });
-    });
+    $("restartServerBtn")?.addEventListener("click", restartServer);
     $("checkAppUpdateBtn")?.addEventListener("click", checkAppUpdate);
+    $("showUpdateNotesBtn")?.addEventListener("click", showUpdateNotes);
+    $("closeUpdateNotesBtn")?.addEventListener("click", () => $("updateNotesDialog")?.close());
+    $("updateNotesDialog")?.addEventListener("click", event => {
+      if (event.target === $("updateNotesDialog")) $("updateNotesDialog")?.close();
+    });
     $("installAppUpdateBtn")?.addEventListener("click", installAppUpdate);
+    document.querySelectorAll("[data-settings-target]").forEach(button => {
+      button.addEventListener("click", () => selectSettingsPanel(button.dataset.settingsTarget || "data"));
+    });
+    document.querySelectorAll(".settings-tabbed .settings-section summary").forEach(summary => {
+      summary.addEventListener("click", event => event.preventDefault());
+    });
+    selectSettingsPanel(document.querySelector("[data-settings-target].active")?.dataset.settingsTarget || "data", { scroll: false });
     $("designPromptConfigForm").addEventListener("submit", saveDesignPromptConfig);
     $("refreshDesignPromptConfigBtn").addEventListener("click", refreshDesignPromptConfig);
     $("agentProjectGrid").addEventListener("click", event => {
@@ -2888,6 +3028,10 @@ body.static-talent-report {
         activeIntelligenceChannel = button.dataset.channel || "";
         document.querySelectorAll("#intelligenceTabs button").forEach(item => item.classList.toggle("active", item === button));
         renderIntelligence();
+        loadKeyIntelligenceSummary().catch(error => {
+          $("keyIntelligenceStatus").textContent = "分析失败";
+          $("keyIntelligenceList").innerHTML = `<div class="empty-report">关键情报分析失败：${escapeHtml(error.message)}</div>`;
+        });
       });
     });
     $("designPosterForm").addEventListener("submit", generateDesignPoster);
@@ -2896,16 +3040,23 @@ body.static-talent-report {
     $("goSettingsFromDesign").addEventListener("click", () => switchPage(9));
     $("aiChatForm").addEventListener("submit", sendAiMessage);
     $("aiPersonProfileBtn").addEventListener("click", () => generatePersonProfileCard());
+    $("homeAiForm")?.addEventListener("submit", submitHomeAi);
+    document.querySelectorAll("[data-home-ai-mode]").forEach(button => {
+      button.addEventListener("click", () => syncHomeAiMode(button));
+    });
     document.querySelectorAll("[data-ai-side-tab]").forEach(button => {
       button.addEventListener("click", () => selectAiSideTab(button.dataset.aiSideTab || "history"));
+    });
+    document.querySelectorAll("[data-ai-profile-close]").forEach(button => {
+      button.addEventListener("click", closeAiProfileFloating);
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") closeAiProfileFloating();
     });
     $("aiChatLog").addEventListener("click", event => {
       const openProfile = event.target.closest("[data-ai-profile-open]");
       if (openProfile) {
-        activeAiProfileId = openProfile.dataset.aiProfileOpen || activeAiProfileId;
-        renderAiProfilePanel(activeAiProfile());
-        selectAiSideTab("profile");
-        setAiProfileExpanded(true);
+        openAiProfileFloating(openProfile.dataset.aiProfileOpen || activeAiProfileId);
         return;
       }
       const followup = event.target.closest("[data-ai-followup]");

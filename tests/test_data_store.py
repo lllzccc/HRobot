@@ -217,9 +217,8 @@ class DataStoreTests(unittest.TestCase):
             encoding="utf-8",
         )
         store = DataStore(self.data_dir)
-        store.save_update_config({"sourcePath": str(release_dir)})
 
-        status = store.update_status()
+        status = store.update_status(str(release_dir))
 
         self.assertTrue(status["updateAvailable"])
         self.assertEqual(status["latest"]["installer"], "HrobotSetup.exe")
@@ -251,6 +250,46 @@ class DataStoreTests(unittest.TestCase):
         self.assertTrue(status["updateAvailable"])
         self.assertEqual(status["sourceType"], "url")
         self.assertEqual(status["latest"]["installerPath"], "https://example.com/hrobot/HrobotSetup.exe")
+
+    def test_update_status_reads_github_latest_release_assets(self):
+        class FakeResponse:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, *_args):
+                return json.dumps(
+                    {
+                        "tag_name": "v9.9.9",
+                        "html_url": "https://github.com/lllzccc/HRobot/releases/tag/v9.9.9",
+                        "body": "GitHub release notes",
+                        "published_at": "2026-07-02T10:00:00Z",
+                        "assets": [
+                            {
+                                "name": "hrobot-mac-source-9.9.9.zip",
+                                "browser_download_url": "https://github.com/lllzccc/HRobot/releases/download/v9.9.9/hrobot-mac-source-9.9.9.zip",
+                            },
+                            {
+                                "name": "hrobot-win-9.9.9.exe",
+                                "browser_download_url": "https://github.com/lllzccc/HRobot/releases/download/v9.9.9/hrobot-win-9.9.9.exe",
+                            },
+                        ],
+                    }
+                ).encode("utf-8")
+
+        store = DataStore(self.data_dir)
+        with patch("server.urlopen", return_value=FakeResponse()):
+            status = store.update_status()
+
+        self.assertTrue(status["updateAvailable"])
+        self.assertEqual(status["sourceType"], "github")
+        self.assertEqual(status["latest"]["installer"], "hrobot-win-9.9.9.exe")
+        self.assertEqual(status["latest"]["notes"], "GitHub release notes")
+        self.assertTrue(status["latest"]["canAutoInstall"])
 
     def test_update_status_rejects_html_share_page_url(self):
         class FakeHtmlResponse:

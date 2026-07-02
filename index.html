@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HR一站式AI工作台</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="static/css/app.css?v=20260701-settings-flat-summary">
+  <link rel="stylesheet" href="static/css/app.css?v=20260702-github-update-release-notes">
 
 </head>
 <body>
@@ -34,85 +34,41 @@
     </aside>
 
     <main class="content">
-      <section class="report-page active cover-page" id="page-1">
-        <div class="cover-inner">
-          <div class="home-board">
-            <section class="home-identity-card" aria-label="HRBP 工作台">
-              <canvas class="home-particle-canvas" id="homeParticleCanvas" aria-hidden="true"></canvas>
-              <div class="home-copy">
-                <p class="home-eyebrow">HRobot</p>
-                <h1 class="cover-title" aria-label="HRBP AI Studio">
-                  <span>HRBP AI</span>
-                  <span>Studio</span>
-                </h1>
-                <p class="cover-subtitle">从人才校准、AI问答到报告产出，HRBP 的判断和行动在这里闭环。</p>
-                <div class="home-actions" aria-label="快捷入口">
-                  <button class="primary home-action" type="button" data-home-page="3">进入人才盘点</button>
-                  <button class="home-action" type="button" data-home-page="5">生成报告</button>
-                </div>
-              </div>
-            </section>
-            <div class="home-workspace">
-              <section class="home-memo-card" aria-label="今日备忘">
-                <div class="home-memo-head">
-                  <span>今日备忘</span>
-                  <span class="home-memo-date" id="homeMemoDate">今天</span>
-                </div>
-                <div>
-                  <h2 class="home-memo-title" id="homeMemoTitle">今日暂无备忘！</h2>
-                  <p class="home-memo-body" id="homeMemoBody">今日也要把待办通通拿下！</p>
-                </div>
-                <div class="home-memo-actions">
-                  <span id="homeMemoSource">来自首页默认提醒</span>
-                  <button type="button" data-home-page="9">配置备忘录</button>
-                </div>
-              </section>
-              <div class="home-module-grid">
-                <button class="home-module" type="button" data-home-page="5">
-                  <span>最近报告</span>
-                  <strong><span id="homeLatestReportTitle">还没有生成报告</span><br><span id="homeLatestReportMeta">导入 skill 和分析材料后，可以在这里继续查看最近产出。</span></strong>
-                  <span class="home-module-watermark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M7 3.5h7l3 3V20.5H7z"/><path d="M14 3.5v4h4"/><path d="M9.5 12h5"/><path d="M9.5 16h4"/></svg>
-                  </span>
-                </button>
-                <button class="home-module" type="button" data-home-page="10">
-                  <span>Agent中心</span>
-                  <strong>收纳 vibe coding 后的独立 Web 功能</strong>
-                  <span class="home-module-watermark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M12 3.5v4"/><path d="M12 16.5v4"/><path d="M4.6 8.2l3.5 2"/><path d="M15.9 13.8l3.5 2"/><path d="M19.4 8.2l-3.5 2"/><path d="M8.1 13.8l-3.5 2"/><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/></svg>
-                  </span>
-                </button>
-                <button class="home-module" type="button" data-home-page="4">
-                  <span>AI问答</span>
-                  <strong>围绕人员、部门和风险做即时查询</strong>
-                  <span class="home-module-watermark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M5 5.5h14v10H8l-3 3z"/><path d="M9 9h6"/><path d="M9 12h4"/></svg>
-                  </span>
-                </button>
-                <button class="home-module" type="button" data-home-page="7">
-                  <span>情报中心</span>
-                  <strong>跟踪 AI × HR 与游戏组织信号</strong>
-                  <span class="home-module-watermark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 0 1 15 0"/><path d="M7.5 12a4.5 4.5 0 0 1 9 0"/><path d="M11 13.5l4-5"/><path d="M12 14.5h.1"/><path d="M5 18h14"/></svg>
-                  </span>
-                </button>
-                <button class="home-module" type="button" data-home-page="8">
-                  <span>设计中心</span>
-                  <strong>连接海报生成与品牌提示词配置</strong>
-                  <span class="home-module-watermark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 2-.7 2-1.6 0-.5-.2-.9-.5-1.2-.3-.4-.5-.7-.5-1.2 0-1 1-1.8 2.1-1.8H16a4.5 4.5 0 0 0 0-9c-1.2-.7-2.5-1.2-4-1.2z"/><path d="M7.8 10h.1"/><path d="M10.3 7.5h.1"/><path d="M13.7 7.5h.1"/><path d="M16.2 10h.1"/></svg>
-                  </span>
-                </button>
-                <button class="home-module" type="button" data-home-page="9">
-                  <span>设置</span>
-                  <strong>维护 AI 接入、首页备忘和系统偏好</strong>
-                  <span class="home-module-watermark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6z"/><path d="M19.2 13.3a7.8 7.8 0 0 0 0-2.6l2-1.5-2-3.4-2.4 1a8.3 8.3 0 0 0-2.2-1.3L14.3 3h-4.6l-.4 2.5a8.3 8.3 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.5a7.8 7.8 0 0 0 0 2.6l-2 1.5 2 3.4 2.4-1a8.3 8.3 0 0 0 2.2 1.3l.4 2.5h4.6l.4-2.5a8.3 8.3 0 0 0 2.2-1.3l2.4 1 2-3.4z"/></svg>
-                  </span>
-                </button>
-              </div>
+      <section class="report-page active cover-page geist-ai-home" id="page-1">
+        <div class="home-ai-stage">
+          <section class="home-ai-panel" aria-label="HRobot AI交互工作台">
+            <header class="home-ai-hero">
+              <h1>
+                <span class="home-ai-title-main home-ai-logo-title">
+                  <img src="assets/brand/hrobot-logo-home-black@4x.png" alt="HRobot">
+                </span>
+                <span class="home-ai-title-sub">HRBP <em>AI</em> Studio</span>
+              </h1>
+            </header>
+
+            <div class="home-ai-tabs" role="tablist" aria-label="首页AI任务类型">
+              <button class="active" type="button" data-home-ai-mode="人才档案">人才档案</button>
+              <button type="button" data-home-ai-mode="考勤分析">考勤分析</button>
+              <button type="button" data-home-ai-mode="组织分析">组织分析</button>
             </div>
-          </div>
+
+            <form class="home-ai-composer" id="homeAiForm">
+              <textarea id="homeAiInput" rows="4" placeholder="今天想分析什么？例如：生成张三的人才档案，或分析美术中心的高潜人才分布。"></textarea>
+              <div class="home-ai-composer-bar">
+                <div class="home-ai-tools" aria-label="当前任务上下文">
+                  <span id="homeAiModeLabel">人才档案</span>
+                  <span>HRobot 数据</span>
+                  <span>默认权限</span>
+                </div>
+                <button class="home-ai-send" type="submit" aria-label="发送到AI问答">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 19V5"></path>
+                    <path d="m5 12 7-7 7 7"></path>
+                  </svg>
+                </button>
+              </div>
+            </form>
+          </section>
         </div>
       </section>
 
@@ -175,21 +131,18 @@
             </div>
           </header>
           <header class="topbar">
-            <div class="brand">
-              <div class="mark logo-mark"><img class="brand-logo" src="assets/brand/logo-cropped.png" alt="示例集团"></div>
-              <h1>人才盘点</h1>
-              <span class="badge">原始数据只读</span>
-            </div>
             <div class="toolbar">
               <button id="reloadBtn" disabled>前进一步</button>
               <button id="resetSelectedBtn" disabled>后退一步</button>
               <button class="danger" id="resetAllBtn">重置全部调整</button>
               <button type="button" id="openTalentDataConfigBtn" data-home-page="6">配置数据</button>
               <div class="export-control">
-                <select id="exportMode" aria-label="导出范围">
-                  <option value="all">导出全部</option>
-                  <option value="diff">导出差异</option>
-                </select>
+                <span class="geist-select-shell">
+                  <select id="exportMode" aria-label="导出范围">
+                    <option value="all">导出全部</option>
+                    <option value="diff">导出差异</option>
+                  </select>
+                </span>
                 <button id="exportBtn">导出校准后Excel</button>
               </div>
               <button class="primary" id="saveBtn">保存调整</button>
@@ -308,16 +261,8 @@
 
           <div class="chat-workspace">
             <section class="chat-log" id="aiChatLog" aria-live="polite">
-              <article class="chat-message assistant">
-                <div class="chat-role">HRobot AI问答助手</div>
-                <div class="chat-bubble">你可以问：某个员工的档案摘要是什么？某个部门高潜人才有哪些？哪些人校准后变化最大？无成长预警人员集中在哪些组织？</div>
-              </article>
             </section>
             <aside class="chat-side-panel" id="aiChatSidePanel" data-tab="history" aria-label="AI问答右侧工作区">
-              <div class="chat-side-tabs" role="tablist" aria-label="AI问答右侧面板">
-                <button class="chat-side-tab active" id="aiHistoryTab" type="button" data-ai-side-tab="history">历史问题</button>
-                <button class="chat-side-tab" id="aiProfileTab" type="button" data-ai-side-tab="profile">人员档案</button>
-              </div>
               <div class="chat-history-panel" aria-label="历史问题">
                 <div class="chat-history-head">
                   <div>
@@ -330,20 +275,43 @@
                   <div class="chat-history-empty">暂无历史问题</div>
                 </div>
               </div>
-              <section class="ai-profile-panel" id="aiProfilePanel" aria-label="人员档案">
-                <div class="ai-profile-empty">
-                  <strong>尚未生成人员档案</strong>
-                  <span>在输入框写姓名或工号后，点击“人才档案”。</span>
-                </div>
-              </section>
             </aside>
           </div>
 
           <form class="chat-compose" id="aiChatForm">
             <textarea id="aiChatInput" rows="3" placeholder="输入你想查询或分析的问题，例如：请列出美术中心 789 宫格人员，并说明他们的职级、序列和无成长预警情况。"></textarea>
-            <button class="secondary" id="aiPersonProfileBtn" type="button">人才档案</button>
-            <button class="primary" type="submit">发送</button>
+            <div class="chat-compose-bar">
+              <div class="chat-mode-tabs" role="group" aria-label="AI问答任务类型">
+                <button class="active" id="aiPersonProfileBtn" type="button">人才档案</button>
+                <button type="button" aria-disabled="true">考勤分析</button>
+                <button type="button" aria-disabled="true">组织分析</button>
+              </div>
+              <button class="primary chat-send-button" id="aiSendBtn" type="submit" aria-label="发送">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 19V5"></path>
+                  <path d="m5 12 7-7 7 7"></path>
+                </svg>
+              </button>
+            </div>
           </form>
+        </div>
+        <div class="ai-profile-floating" id="aiProfileFloating" aria-hidden="true">
+          <div class="ai-profile-floating-backdrop" data-ai-profile-close></div>
+          <section class="ai-profile-floating-card" role="dialog" aria-modal="true" aria-labelledby="aiProfileFloatingTitle">
+            <div class="ai-profile-floating-top">
+              <div>
+                <span class="ai-profile-floating-kicker">Talent Resume</span>
+                <h2 id="aiProfileFloatingTitle">人员档案</h2>
+              </div>
+              <button class="ai-profile-floating-close" type="button" data-ai-profile-close aria-label="关闭人员档案">×</button>
+            </div>
+            <div class="ai-profile-panel" id="aiProfilePanel" aria-label="人员档案">
+              <div class="ai-profile-empty">
+                <strong>尚未生成人员档案</strong>
+                <span>在输入框写姓名或工号后，点击“人才档案”。</span>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -1294,6 +1262,16 @@
               <span class="status-line" id="intelligenceStatus">等待加载</span>
             </div>
           </section>
+          <section class="key-intelligence-panel" aria-labelledby="keyIntelligenceTitle">
+            <div class="key-intelligence-head">
+              <div>
+                <span class="panel-kicker">上周新闻分析</span>
+                <h2 id="keyIntelligenceTitle">关键情报</h2>
+              </div>
+              <span class="status-line" id="keyIntelligenceStatus">等待分析</span>
+            </div>
+            <div class="key-intelligence-list" id="keyIntelligenceList"></div>
+          </section>
           <section class="intelligence-grid">
             <div class="import-card">
               <div class="section-head">
@@ -1417,12 +1395,7 @@
             </div>
           </header>
           <section class="import-card agent-project-panel">
-            <div class="section-head">
-              <div class="page-banner-actions">
-                <span class="badge" id="agentProjectListCount">0 个</span>
-                <span class="status-line" id="agentProjectStatus"></span>
-              </div>
-            </div>
+            <span class="agent-project-status-sr" id="agentProjectStatus" aria-live="polite"></span>
             <div class="agent-project-grid" id="agentProjectGrid"></div>
             <input id="agentProjectZipInput" class="visually-hidden-file" type="file" accept=".zip,application/zip" tabindex="-1" aria-hidden="true">
           </section>
@@ -1447,8 +1420,18 @@
               <p>集中管理本地 AI、员工数据源和系统运行配置，保存后供 AI 问答、报告生成和人才分析调用。</p>
             </div>
           </header>
-          <section class="settings-layout">
-            <details class="settings-section" open>
+          <section class="settings-layout settings-tabbed" data-settings-tabs>
+            <nav class="settings-nav" aria-label="设置分类">
+              <button class="active" type="button" data-settings-target="data">数据源</button>
+              <button type="button" data-settings-target="model">模型配置</button>
+              <button type="button" data-settings-target="design">设计中心</button>
+              <button type="button" data-settings-target="memo">首页备忘</button>
+              <button type="button" data-settings-target="intelligence">情报中心</button>
+              <button type="button" data-settings-target="update">应用更新</button>
+              <button type="button" data-settings-target="status">运行状态</button>
+            </nav>
+            <div class="settings-panels">
+            <details class="settings-section active" data-settings-panel="data" open>
               <summary>
                 <div class="settings-summary-title">
                   <h2>数据源配置</h2>
@@ -1492,7 +1475,7 @@
                 </form>
               </div>
             </details>
-            <details class="settings-section">
+            <details class="settings-section" data-settings-panel="model">
               <summary>
                 <div class="settings-summary-title">
                   <h2>模型配置</h2>
@@ -1543,15 +1526,19 @@
                 </form>
               </div>
             </details>
-            <details class="settings-section">
+            <details class="settings-section" data-settings-panel="design">
               <summary>
                 <div class="settings-summary-title">
                   <h2>设计中心提示词配置</h2>
                 </div>
                 <span class="settings-summary-icon" aria-hidden="true">⌄</span>
               </summary>
-              <form class="settings-section-body memo-settings-card" id="designPromptConfigForm">
+              <form class="settings-section-body memo-settings-card design-settings-form" id="designPromptConfigForm">
               <div class="memo-settings-grid">
+                <div class="settings-fieldset-title">
+                  <h3>生成目标</h3>
+                  <p>定义设计中心默认生成什么，以及画面应该遵守的长期品牌规则。</p>
+                </div>
                 <div class="field">
                   <label for="designPromptBaseInput">基础提示词（平时做什么）</label>
                   <p class="field-help">适合写长期通用目标，比如招聘海报、节日海报、活动主视觉。</p>
@@ -1562,6 +1549,10 @@
                   <p class="field-help">写品牌色、行业感、信息清晰度这类长期有效的画面要求。</p>
                   <textarea id="designPromptBrandInput" placeholder="例如：使用品牌主色、信息清晰、适合游戏行业场景。"></textarea>
                 </div>
+                <div class="settings-fieldset-title">
+                  <h3>本次约束</h3>
+                  <p>填写必须满足的硬性要求，以及参考素材目录中的图片应该如何被模型使用。</p>
+                </div>
                 <div class="field">
                   <label for="designPromptCustomInput">自定义固定限定（这次必须满足）</label>
                   <p class="field-help">适合写硬性要求，比如必须带 logo、必须参考模板、必须借鉴吉祥物。</p>
@@ -1571,6 +1562,10 @@
                   <label for="designPromptReferenceInput">参考素材说明（怎么用目录里的图）</label>
                   <p class="field-help">写给模型看的使用规则，比如优先参考 logo、模板版式或吉祥物造型。</p>
                   <textarea id="designPromptReferenceInput" placeholder="例如：如果 references 目录里有 logo、吉祥物、模板，请优先参考其风格和版式。"></textarea>
+                </div>
+                <div class="settings-fieldset-title">
+                  <h3>高级模板</h3>
+                  <p>通常不需要改；只有要重排最终 prompt 结构时再调整。</p>
                 </div>
                 <div class="field">
                   <label for="designPromptTemplateInput">Prompt 模板</label>
@@ -1596,7 +1591,7 @@
               <div class="memo-record-list" id="designReferenceFileList"></div>
               </form>
             </details>
-            <details class="settings-section">
+            <details class="settings-section" data-settings-panel="memo">
               <summary>
                 <div class="settings-summary-title">
                   <h2>首页备忘录</h2>
@@ -1621,52 +1616,76 @@
               <div class="memo-record-list" id="homeMemoRecordList"></div>
               </form>
             </details>
-            <details class="settings-section">
+            <details class="settings-section" data-settings-panel="intelligence">
               <summary>
                 <div class="settings-summary-title">
                   <h2>情报中心配置</h2>
                 </div>
                 <span class="settings-summary-icon" aria-hidden="true">⌄</span>
               </summary>
-              <form class="settings-section-body intelligence-settings-card" id="intelligenceConfigForm">
-              <div class="settings-grid">
-                <div class="field">
+              <form class="settings-section-body intelligence-settings-card compact-intelligence-settings" id="intelligenceConfigForm">
+              <div class="settings-fieldset-title">
+                <h3>自动更新</h3>
+                <p>控制每日自动抓取的时间、渠道和来源范围。</p>
+              </div>
+              <div class="intelligence-control-row">
+                <div class="field intelligence-toggle-field">
                   <label for="intelligenceAutoEnabled">自动更新</label>
-                  <select id="intelligenceAutoEnabled">
+                  <select class="settings-native-sync" id="intelligenceAutoEnabled" aria-hidden="true" tabindex="-1">
                     <option value="true">开启</option>
                     <option value="false">关闭</option>
                   </select>
+                  <button class="geist-switch" id="intelligenceAutoToggle" type="button" role="switch" aria-checked="true" data-toggle-select="intelligenceAutoEnabled">
+                    <span></span>
+                    <strong>开启</strong>
+                  </button>
                 </div>
-                <div class="field">
+                <div class="field intelligence-time-field">
                   <label for="intelligenceRunAt">每日时间</label>
                   <input id="intelligenceRunAt" class="query-input" type="time" value="10:00">
                 </div>
-                <div class="field">
-                  <label for="intelligenceChannelConfig">更新渠道</label>
-                  <select id="intelligenceChannelConfig">
-                    <option value="all">全部</option>
-                    <option value="ai_hr">AI × HR</option>
-                    <option value="game_org">游戏组织</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="intelligenceSourceConfig">检索来源</label>
-                  <select id="intelligenceSourceConfig">
-                    <option value="all">Bing + 微信</option>
-                    <option value="bing">仅 Bing 新闻</option>
-                    <option value="wechat">仅微信公众号</option>
-                  </select>
-                </div>
-                <div class="field">
+                <div class="field intelligence-number-field">
                   <label for="intelligenceMaxPerQuery">每词条数</label>
                   <input id="intelligenceMaxPerQuery" class="query-input" type="number" min="1" max="10" value="3">
                 </div>
-                <div class="field">
+                <div class="field intelligence-number-field">
                   <label for="intelligenceWechatLimit">微信全文数</label>
                   <input id="intelligenceWechatLimit" class="query-input" type="number" min="0" max="5" value="1">
                 </div>
               </div>
-              <label class="checkbox-field">
+              <div class="settings-fieldset-title">
+                <h3>检索范围</h3>
+                <p>用分段控件选择情报频道与检索来源。</p>
+              </div>
+              <div class="intelligence-segment-grid">
+                <div class="field">
+                  <label for="intelligenceChannelConfig">更新渠道</label>
+                  <select class="settings-native-sync" id="intelligenceChannelConfig" aria-hidden="true" tabindex="-1">
+                    <option value="all">全部</option>
+                    <option value="ai_hr">AI × HR</option>
+                    <option value="game_org">游戏组织</option>
+                  </select>
+                  <div class="geist-segment" data-segment-for="intelligenceChannelConfig" role="group" aria-label="更新渠道">
+                    <button class="active" type="button" data-segment-value="all">全部</button>
+                    <button type="button" data-segment-value="ai_hr">AI × HR</button>
+                    <button type="button" data-segment-value="game_org">游戏组织</button>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="intelligenceSourceConfig">检索来源</label>
+                  <select class="settings-native-sync" id="intelligenceSourceConfig" aria-hidden="true" tabindex="-1">
+                    <option value="all">Bing + 微信</option>
+                    <option value="bing">仅 Bing 新闻</option>
+                    <option value="wechat">仅微信公众号</option>
+                  </select>
+                  <div class="geist-segment" data-segment-for="intelligenceSourceConfig" role="group" aria-label="检索来源">
+                    <button class="active" type="button" data-segment-value="all">Bing + 微信</button>
+                    <button type="button" data-segment-value="bing">Bing</button>
+                    <button type="button" data-segment-value="wechat">微信公众号</button>
+                  </div>
+                </div>
+              </div>
+              <label class="checkbox-field intelligence-inline-toggle">
                 <input id="intelligenceAllowUnverifiedWechat" type="checkbox">
                 <span>保留未核验微信线索</span>
               </label>
@@ -1676,7 +1695,7 @@
               </div>
               </form>
             </details>
-            <details class="settings-section">
+            <details class="settings-section" data-settings-panel="update">
               <summary>
                 <div class="settings-summary-title">
                   <h2>应用更新</h2>
@@ -1684,12 +1703,13 @@
                 <span class="settings-summary-icon" aria-hidden="true">⌄</span>
               </summary>
               <form class="settings-section-body update-settings-card" id="appUpdateForm">
-                <div class="settings-grid">
-                  <div class="field update-source-field">
-                    <label for="updateSourcePathInput">共享盘更新目录 / release.json URL</label>
-                    <input id="updateSourcePathInput" class="query-input" placeholder="例如 D:\企业微信网盘\HROBOT-release 或 https://.../release.json">
-                    <p class="field-help">本地目录内需包含 release.json 和 hrobot-win-版本号.exe；URL 必须直接返回 release.json，网页分享页通常不能自动下载。</p>
+                <div class="update-source-panel">
+                  <div>
+                    <span class="update-source-label">更新源</span>
+                    <strong id="updateSourceLabel">GitHub Release</strong>
+                    <p>固定检查 lllzccc/HRobot 的最新 Release，并按当前系统选择对应安装包。</p>
                   </div>
+                  <a id="updateReleaseLink" href="https://github.com/lllzccc/HRobot/releases/latest" target="_blank" rel="noopener">打开 Release</a>
                 </div>
                 <div class="server-status-grid update-status-grid">
                   <div><span>当前版本</span><strong id="currentAppVersion">-</strong></div>
@@ -1699,23 +1719,32 @@
                 </div>
                 <div class="update-notes" id="updateInstallDirectory">备注：文件默认安装目录：%LOCALAPPDATA%\Hrobot</div>
                 <div class="form-actions">
-                  <button class="primary" type="submit">保存更新源</button>
                   <button type="button" id="checkAppUpdateBtn">检查更新</button>
+                  <button type="button" id="showUpdateNotesBtn" disabled>版本说明</button>
                   <button type="button" id="installAppUpdateBtn" disabled>下载并更新</button>
                   <span class="status-line" id="appUpdateStatus"></span>
                 </div>
               </form>
+              <dialog class="update-notes-dialog" id="updateNotesDialog" aria-labelledby="updateNotesDialogTitle">
+                <div class="update-notes-dialog-head">
+                  <div>
+                    <h3 id="updateNotesDialogTitle">版本说明</h3>
+                    <p id="updateNotesDialogMeta">-</p>
+                  </div>
+                  <button type="button" id="closeUpdateNotesBtn" aria-label="关闭版本说明">×</button>
+                </div>
+                <div class="update-notes-dialog-body" id="updateNotesDialogBody">暂无版本说明。</div>
+              </dialog>
             </details>
-            <section class="settings-section server-status-card" aria-label="服务器状态">
+            <section class="settings-section server-status-card" data-settings-panel="status" aria-label="服务器状态">
               <div class="server-status-main">
                 <div class="settings-summary-title">
-                  <h2>服务器状态</h2>
-                  <p>查看本地服务连接状态，必要时可一键重启当前服务器。</p>
+                  <h2>运行状态</h2>
+                  <p>查看当前服务连接与守护状态；服务生命周期由常驻进程统一管理。</p>
                 </div>
                 <div class="server-status-actions">
                   <span class="server-status-pill is-checking" id="serverStatusPill">检测中</span>
                   <button type="button" id="refreshServerStatusBtn">刷新状态</button>
-                  <button class="primary" type="button" id="restartServerBtn">重启服务器</button>
                 </div>
               </div>
               <div class="server-status-grid">
@@ -1724,8 +1753,9 @@
                 <div><span>进程 ID</span><strong id="serverStatusPid">-</strong></div>
                 <div><span>启动时间</span><strong id="serverStatusStartedAt">-</strong></div>
               </div>
-              <div class="status-line" id="serverStatusMessage">正在检查服务器连接。</div>
+              <div class="status-line" id="serverStatusMessage">正在检查服务连接。</div>
             </section>
+            </div>
           </section>
         </div>
       </section>
@@ -1733,7 +1763,7 @@
   </div>
 
   <script src="static/modules/talent-review/talent-review.js?v=20260701-data-source-summary"></script>
-  <script src="static/js/app.js?v=20260701-data-source-summary"></script>
+  <script src="static/js/app.js?v=20260702-github-update-release-notes"></script>
   <script src="static/modules/reports/report-inline-calibrator.js?v=20260701-data-source-summary"></script>
   <script src="static/modules/reports/report-detail-tables.js?v=20260701-data-source-summary"></script>
 
