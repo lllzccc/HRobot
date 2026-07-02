@@ -969,10 +969,6 @@
       const releasePage = latest.releasePage || payload.sourcePath || payload.releasePage || "https://github.com/lllzccc/HRobot/releases/latest";
       if ($("updateReleaseLink")) $("updateReleaseLink").href = releasePage;
       if ($("updateSourceLabel")) $("updateSourceLabel").textContent = payload.sourceType === "github" ? "GitHub Release" : (payload.sourcePath || "GitHub Release");
-      if ($("updateInstallDirectory")) {
-        const platformText = latest.platform === "mac" ? "macOS 源码包" : latest.platform === "windows" ? "Windows 安装包" : "当前系统安装包";
-        $("updateInstallDirectory").textContent = `备注：当前会匹配 ${platformText}；Windows 默认安装目录：${app.installDir || "%LOCALAPPDATA%\\Hrobot"}。`;
-      }
       if ($("showUpdateNotesBtn")) $("showUpdateNotesBtn").disabled = false;
       if ($("installAppUpdateBtn")) $("installAppUpdateBtn").disabled = !(payload.updateAvailable && latest.canAutoInstall);
       if ($("appUpdateStatus")) {

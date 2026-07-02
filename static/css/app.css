@@ -1831,14 +1831,6 @@
       font-weight: var(--type-control-weight);
     }
 
-    .update-source-panel p {
-      margin: 4px 0 0;
-      color: #64748b;
-      font-size: var(--type-meta-size);
-      line-height: var(--type-meta-line);
-      font-weight: var(--type-meta-weight);
-    }
-
     .update-source-panel a {
       flex: 0 0 auto;
       color: #0f172a;
