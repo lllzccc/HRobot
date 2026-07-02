@@ -1,13 +1,13 @@
     const gridDefs = [
-      { id: 6, name: "熟练员工", perf: "高", potential: "低", band: "blue", ratio: 10, hint: "技术专家或有稳定资源的人才。给予认可，承担导师，可用轮岗保持积极性。" },
-      { id: 8, name: "绩效之星", perf: "高", potential: "中", band: "orange", ratio: 10, hint: "有闪光点也有短板的人才。重点投入资源，给予历练机会。" },
-      { id: 9, name: "超级明星", perf: "高", potential: "高", band: "orange", ratio: 5, hint: "能干大事的人。重点投入资源，给挑战性任务和机会，激发进一步成长。" },
-      { id: 3, name: "基本胜任", perf: "中", potential: "低", band: "green", ratio: 10, hint: "稳定执行的人才。设置绩效挑战目标，培养提升。" },
-      { id: 5, name: "中坚力量", perf: "中", potential: "中", band: "blue", ratio: 30, hint: "大部分骨干人群。设置绩效挑战目标，差异化投入资源，向 6/8/9 迈进。" },
-      { id: 7, name: "潜力之星", perf: "中", potential: "高", band: "orange", ratio: 10, hint: "受保护的冲锋者。重点投入资源，设置业务挑战目标，给机会和时间产出绩效。" },
-      { id: 1, name: "问题员工", perf: "低", potential: "低", band: "green", ratio: 5, hint: "需要尽快处理的人才。考虑降级、转岗或淘汰。" },
-      { id: 2, name: "差距员工", perf: "低", potential: "中", band: "green", ratio: 10, hint: "新人或执行力存在差距的人才。需要辅导改进，也可考虑调岗。" },
-      { id: 4, name: "待发展者", perf: "低", potential: "高", band: "blue", ratio: 10, hint: "有潜质但产出不足的人才。给时间和机会产出绩效，或放到合适岗位。" }
+      { id: 6, name: "熟练员工", perf: "高", potential: "低", band: "blue", ratio: 10, hint: "技术专家或“有资源”的人才，绩效优秀，但潜力已接近天花板" },
+      { id: 8, name: "绩效之星", perf: "高", potential: "中", band: "orange", ratio: 10, hint: "业务支柱，绩效稳定突出但潜力中等，是岗位专家型人才" },
+      { id: 9, name: "超级明星", perf: "高", potential: "高", band: "orange", ratio: 5, hint: "组织最核心的人才，绩效突出且具备快速成长与晋升到更高层级的潜力" },
+      { id: 3, name: "基本胜任", perf: "中", potential: "低", band: "green", ratio: 10, hint: "混日子、安于现状的人，胜任现职级，但成长空间有限" },
+      { id: 5, name: "中坚力量", perf: "中", potential: "中", band: "blue", ratio: 30, hint: "稳定贡献者，大部分骨干人群，胜任现有岗位" },
+      { id: 7, name: "潜力之星", perf: "中", potential: "高", band: "orange", ratio: 10, hint: "高潜培养对象，绩效良好，潜力突出" },
+      { id: 1, name: "问题员工", perf: "低", potential: "低", band: "green", ratio: 5, hint: "问题员工，绩效与潜力低，无法胜任当前工作" },
+      { id: 2, name: "差距员工", perf: "低", potential: "中", band: "green", ratio: 10, hint: "新人/小聪明、执行力差的人，潜力一般，绩效低于预期" },
+      { id: 4, name: "待发展者", perf: "低", potential: "高", band: "blue", ratio: 10, hint: "有个性的新人/不投入的老人，有高成长空间，但潜力还未转化为绩效" }
     ];
 
     const levelWeight = { M6: 12, M5: 11, P10: 10, M4: 9.5, P9: 9, M3: 8.5, P8: 8, M2: 7.5, P7: 7, P6: 6, P5: 5, P4: 4 };
@@ -18,8 +18,12 @@
     const expandedDepartments = new Set();
     let dirty = false;
     let aiChatHistory = [];
+    let aiProfileCards = [];
+    let activeAiProfileId = "";
+    let aiProfileExpanded = false;
     let querySelectedId = null;
     let talentPools = [];
+    let profileNotes = {};
     let editingTalentPoolName = "";
     let generatedReports = [];
     let agentCenterProjects = [];
@@ -47,6 +51,27 @@
       supervisorAdjusted: new Set(),
       calibrationDiff: new Set()
     };
+    const builtInAgentProjects = [
+      {
+        id: "builtin-talent-report-2026",
+        name: "2026人才盘点汇报",
+        description: "内置盘点汇报工具，集中查看总览、干部、关键岗位、校招生、汰换待提升与人才策略。",
+        runtime: "builtin",
+        builtIn: true,
+        fileCount: 1,
+        size: 0,
+        analysis: {
+          runtimeLabel: "内置工具",
+          confidence: 1,
+          source: "builtin"
+        },
+        environment: {
+          canOpen: true,
+          label: "本机可打开",
+          message: "点击后在当前工作台打开。"
+        }
+      }
+    ];
 
     const $ = id => document.getElementById(id);
     const HOME_AI_QUESTION_COUNT_KEY = "hrobot.aiQuestionCount";
@@ -59,6 +84,149 @@
     const setHomeCount = (id, value) => {
       const target = $(id);
       if (target) target.textContent = formatCount(value);
+    };
+    const initHomeIdentityParticles = () => {
+      const canvas = $("homeParticleCanvas");
+      const card = canvas?.closest(".home-identity-card");
+      if (!canvas || !card) return;
+
+      const context = canvas.getContext("2d");
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+      const pointer = { x: 0, y: 0, active: false };
+      const particles = [];
+      let width = 0;
+      let height = 0;
+      let ratio = 1;
+      let animationFrame = 0;
+
+      const setPointerStyle = (x, y) => {
+        const xPercent = width ? (x / width) * 100 : 78;
+        const yPercent = height ? (y / height) * 100 : 18;
+        card.style.setProperty("--home-particle-x", `${xPercent}%`);
+        card.style.setProperty("--home-particle-y", `${yPercent}%`);
+      };
+
+      const makeParticle = index => {
+        const band = index % 3;
+        const baseX = width * (0.46 + Math.random() * 0.5);
+        const baseY = height * (band === 0 ? 0.14 + Math.random() * 0.2 : 0.28 + Math.random() * 0.66);
+        return {
+          x: baseX,
+          y: baseY,
+          ox: baseX,
+          oy: baseY,
+          vx: -0.08 - Math.random() * 0.18,
+          vy: -0.035 + Math.random() * 0.07,
+          size: 0.72 + Math.random() * 1.55,
+          alpha: 0.32 + Math.random() * 0.58,
+          phase: Math.random() * Math.PI * 2
+        };
+      };
+
+      const seedParticles = () => {
+        particles.length = 0;
+        const count = reduceMotion ? 72 : Math.min(220, Math.max(138, Math.round((width * height) / 2100)));
+        for (let index = 0; index < count; index += 1) particles.push(makeParticle(index));
+      };
+
+      const resize = () => {
+        const rect = card.getBoundingClientRect();
+        width = Math.max(1, Math.round(rect.width));
+        height = Math.max(1, Math.round(rect.height));
+        ratio = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        seedParticles();
+        setPointerStyle(width * .78, height * .2);
+      };
+
+      const draw = time => {
+        context.clearRect(0, 0, width, height);
+
+        const gradient = context.createRadialGradient(width * .82, height * .16, 0, width * .82, height * .16, width * .52);
+        gradient.addColorStop(0, "rgba(255, 255, 255, 0.14)");
+        gradient.addColorStop(0.46, "rgba(224, 238, 255, 0.055)");
+        gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, width, height);
+
+        for (const particle of particles) {
+          if (!reduceMotion) {
+            particle.x += particle.vx;
+            particle.y += particle.vy + Math.sin(time * 0.0012 + particle.phase) * 0.035;
+
+            if (particle.x < width * .18 || particle.y < -12) {
+              particle.x = width * (0.68 + Math.random() * 0.3);
+              particle.y = height * (0.34 + Math.random() * 0.62);
+            }
+
+            if (pointer.active) {
+              const dx = pointer.x - particle.x;
+              const dy = pointer.y - particle.y;
+              const distance = Math.hypot(dx, dy) || 1;
+              const pull = Math.max(0, 1 - distance / 160) * 0.045;
+              particle.x += dx * pull;
+              particle.y += dy * pull;
+            } else {
+              particle.x += (particle.ox - particle.x) * 0.002;
+              particle.y += (particle.oy - particle.y) * 0.002;
+            }
+          }
+
+          const shimmer = 0.72 + Math.sin(time * 0.002 + particle.phase) * 0.28;
+          const activeBoost = pointer.active ? 1.32 : 1;
+          if (particle.size > 1.15) {
+            context.beginPath();
+            context.strokeStyle = `rgba(248, 252, 255, ${particle.alpha * .18 * activeBoost})`;
+            context.lineWidth = .7;
+            context.moveTo(particle.x, particle.y);
+            context.lineTo(particle.x - particle.vx * 18, particle.y - particle.vy * 18);
+            context.stroke();
+          }
+
+          context.beginPath();
+          context.fillStyle = `rgba(248, 252, 255, ${Math.min(.9, particle.alpha * shimmer * activeBoost)})`;
+          context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+          context.fill();
+
+          if (particle.size > 1.28) {
+            context.beginPath();
+            context.fillStyle = `rgba(242, 248, 255, ${particle.alpha * .14})`;
+            context.arc(particle.x, particle.y, particle.size * 3.4, 0, Math.PI * 2);
+            context.fill();
+          }
+        }
+
+        if (!reduceMotion) animationFrame = requestAnimationFrame(draw);
+      };
+
+      const handleMove = event => {
+        const rect = card.getBoundingClientRect();
+        pointer.x = event.clientX - rect.left;
+        pointer.y = event.clientY - rect.top;
+        pointer.active = true;
+        card.classList.add("is-particle-active");
+        setPointerStyle(pointer.x, pointer.y);
+      };
+
+      const handleLeave = () => {
+        pointer.active = false;
+        card.classList.remove("is-particle-active");
+        setPointerStyle(width * .78, height * .2);
+      };
+
+      card.addEventListener("pointermove", handleMove);
+      card.addEventListener("pointerleave", handleLeave);
+      card.addEventListener("focusin", () => card.classList.add("is-particle-active"));
+      card.addEventListener("focusout", () => card.classList.remove("is-particle-active"));
+
+      const observer = new ResizeObserver(resize);
+      observer.observe(card);
+      resize();
+      draw(0);
     };
     const renderHomeLatestReport = reports => {
       const title = $("homeLatestReportTitle");
@@ -321,29 +489,31 @@
     function renderAgentProjectCard(project) {
       const analysis = project.analysis || {};
       const environment = project.environment || {};
+      const isBuiltIn = Boolean(project.builtIn);
       const runtimeNames = {
         "python-server": "Python 服务",
         "node-vite": "Vite 服务",
         "node-next": "Next.js 服务",
         "node-server": "Node 服务",
         "static-web": "静态页面",
+        "builtin": "内置工具",
         "unknown": "待确认结构"
       };
       const runtimeLabel = analysis.runtimeLabel || runtimeNames[project.runtime] || "待确认结构";
       const description = project.description
         || (project.runtime && project.runtime !== "static-web" ? "带独立后端的数据型 Web 功能，点击后启动自己的本地服务。" : "独立打包的前端页面，点击后直接打开正式功能。");
-      const fileText = `${Number(project.fileCount) || 0} 个文件`;
+      const fileText = isBuiltIn ? "HRobot 内置" : `${Number(project.fileCount) || 0} 个文件`;
       const confidence = Number(analysis.confidence || 0);
       const confidenceText = confidence ? `识别 ${Math.round(confidence * 100)}%` : "未识别";
-      const installText = analysis.requiresInstall ? "需安装依赖" : (analysis.source === "rules+ai" ? "AI 已辅助" : "规则扫描");
+      const installText = isBuiltIn ? "无需上传" : (analysis.requiresInstall ? "需安装依赖" : (analysis.source === "rules+ai" ? "AI 已辅助" : "规则扫描"));
       const environmentOk = environment.canOpen !== false;
       const environmentLabel = environment.label || (environmentOk ? "本机可打开" : "本机缺环境");
       const environmentMessage = environment.message || "";
       const environmentClass = environmentOk ? "ready" : "blocked";
-      const openLabel = environmentOk ? "打开功能" : "查看环境";
+      const openLabel = isBuiltIn ? "打开汇报" : (environmentOk ? "打开功能" : "查看环境");
       return `
         <article class="agent-project-card" data-agent-project-open="${escapeHtml(project.id || "")}" data-agent-project-id="${escapeHtml(project.id || "")}" title="打开正式页面">
-          <button class="agent-project-delete" type="button" data-agent-project-delete="${escapeHtml(project.id || "")}" title="删除">×</button>
+          ${isBuiltIn ? "" : `<button class="agent-project-delete" type="button" data-agent-project-delete="${escapeHtml(project.id || "")}" title="删除">×</button>`}
           <div class="agent-project-kicker">${escapeHtml(runtimeLabel)}</div>
           <h3>${escapeHtml(project.name || "未命名 Web 项目")}</h3>
           <p class="agent-project-desc">${escapeHtml(description)}</p>
@@ -358,8 +528,8 @@
             <span>${escapeHtml(installText)}</span>
           </div>
           <div class="agent-project-actions">
-            <button type="button" data-agent-project-analyze="${escapeHtml(project.id || "")}">重新分析</button>
-            <span class="agent-project-openline"><span>打开功能</span><span aria-hidden="true">→</span></span>
+            ${isBuiltIn ? "" : `<button type="button" data-agent-project-analyze="${escapeHtml(project.id || "")}">重新分析</button>`}
+            <span class="agent-project-openline"><span>${escapeHtml(openLabel)}</span><span aria-hidden="true">→</span></span>
           </div>
         </article>
       `;
@@ -376,11 +546,12 @@
 
     function renderAgentProjects(payload = {}) {
       agentCenterProjects = Array.isArray(payload.projects) ? payload.projects : agentCenterProjects;
+      const visibleProjects = [...builtInAgentProjects, ...agentCenterProjects];
       const totalFiles = agentCenterProjects.reduce((sum, item) => sum + (Number(item.fileCount) || 0), 0);
       const totalSize = agentCenterProjects.reduce((sum, item) => sum + (Number(item.size) || 0), 0);
-      if ($("agentProjectListCount")) $("agentProjectListCount").textContent = `${agentCenterProjects.length} 个`;
+      if ($("agentProjectListCount")) $("agentProjectListCount").textContent = `${visibleProjects.length} 个`;
       if ($("agentProjectGrid")) {
-        $("agentProjectGrid").innerHTML = `${agentCenterProjects.map(renderAgentProjectCard).join("")}${renderAgentProjectAddCard()}`;
+        $("agentProjectGrid").innerHTML = `${visibleProjects.map(renderAgentProjectCard).join("")}${renderAgentProjectAddCard()}`;
       }
     }
 
@@ -442,6 +613,12 @@
 
     async function openAgentProject(projectId) {
       const status = $("agentProjectStatus");
+      if (builtInAgentProjects.some(project => project.id === projectId)) {
+        if (status) status.textContent = "已打开 2026人才盘点汇报。";
+        switchPage(11);
+        document.querySelector('[data-page="10"]')?.classList.add("active");
+        return;
+      }
       if (status) status.textContent = "正在打开独立项目...";
       const blankWindow = window.open("about:blank", "_blank");
       if (blankWindow) {
@@ -510,6 +687,7 @@
       if (String(page) === "10") loadAgentProjects().catch(error => $("agentProjectStatus").textContent = `Agent 中心加载失败：${error.message}`);
       if (String(page) === "9") loadHomeMemos().catch(error => $("homeMemoStatus").textContent = `备忘加载失败：${error.message}`);
       if (String(page) === "9") loadDesignPromptConfig().catch(error => $("designPromptConfigStatus").textContent = `设计配置加载失败：${error.message}`);
+      if (String(page) === "9") loadDataSourceConfig().catch(error => $("dataSourceConfigStatus").textContent = `数据源配置加载失败：${error.message}`);
       if (String(page) === "9") loadIntelligenceConfig().catch(error => $("intelligenceConfigStatus").textContent = `情报配置加载失败：${error.message}`);
       if (String(page) === "9") loadServerStatus().catch(() => {});
       if (String(page) === "9") loadAiConfig().catch(error => {
@@ -517,6 +695,7 @@
       });
       if (String(page) === "11" && typeof window.renderReportTool === "function") window.renderReportTool();
       if (String(page) !== "11" && typeof window.closeReportCalibrationDrawer === "function") window.closeReportCalibrationDrawer();
+      if (String(page) === "3" && typeof window.restoreTalentReviewPage === "function") window.restoreTalentReviewPage();
     }
 
     function toggleSidebar() {
@@ -531,7 +710,7 @@
       return [...new Set(values.filter(Boolean))];
     }
 
-    function appendAiMessage(role, content) {
+    function appendAiMessage(role, content, extraHtml = "") {
       const log = $("aiChatLog");
       if (!log) return;
       const label = role === "user" ? "你" : "AI 分析助手";
@@ -539,6 +718,7 @@
         <article class="chat-message ${role}">
           <div class="chat-role">${label}</div>
           <div class="chat-bubble">${escapeHtml(content)}</div>
+          ${extraHtml}
         </article>
       `);
       log.scrollTop = log.scrollHeight;
@@ -558,6 +738,120 @@
       if ($("settingsImageBaseUrl")) $("settingsImageBaseUrl").value = image.baseUrl || "https://api.openai.com/v1";
       if ($("settingsImageModel")) $("settingsImageModel").value = image.model || "";
       if ($("settingsImageApiKey")) $("settingsImageApiKey").placeholder = image.configured ? "已保存，留空不覆盖" : "请输入 Image API Key";
+    }
+
+    function renderLocalDataSourceScan(payload = {}) {
+      const list = $("localDataSourceScanList");
+      if (!list) return;
+      if (payload.error) {
+        list.innerHTML = `<div class="memo-record-item"><span class="memo-record-date">扫描失败</span><span class="memo-record-text">${escapeHtml(payload.error)}</span></div>`;
+        return;
+      }
+      const summary = payload.summary || {};
+      if (!payload.fileCount) {
+        list.innerHTML = `<div class="memo-record-item"><span class="memo-record-date">扫描结果</span><span class="memo-record-text">暂未发现可识别的数据文件。</span></div>`;
+        return;
+      }
+      const blocks = [];
+      if (payload.aiSummary) {
+        blocks.push(`
+          <div class="memo-record-item">
+            <span class="memo-record-date">AI 总结</span>
+            <span class="memo-record-text">${escapeHtml(payload.aiSummary)}</span>
+          </div>
+        `);
+      } else if (summary.overview) {
+        blocks.push(`
+          <div class="memo-record-item">
+            <span class="memo-record-date">总体判断</span>
+            <span class="memo-record-text">${escapeHtml(summary.overview)}</span>
+          </div>
+        `);
+      }
+      const typeText = (summary.typeBreakdown || [])
+        .filter(item => item.count)
+        .map(item => `${item.label} ${item.count} 个`)
+        .join("；");
+      if (typeText) {
+        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">内容概况</span><span class="memo-record-text">${escapeHtml(typeText)}</span></div>`);
+      }
+      if ((summary.analysisOpportunities || []).length) {
+        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">可做分析</span><span class="memo-record-text">${escapeHtml(summary.analysisOpportunities.join("；"))}</span></div>`);
+      }
+      if ((summary.structureIssues || []).length) {
+        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">结构问题</span><span class="memo-record-text">${escapeHtml(summary.structureIssues.join("；"))}</span></div>`);
+      }
+      if ((summary.recommendations || []).length) {
+        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">建议项</span><span class="memo-record-text">${escapeHtml(summary.recommendations.join("；"))}</span></div>`);
+      }
+      if ((summary.topFolders || []).length) {
+        blocks.push(`<div class="memo-record-item"><span class="memo-record-date">目录分布</span><span class="memo-record-text">${escapeHtml(summary.topFolders.join("；"))}</span></div>`);
+      }
+      list.innerHTML = blocks.join("");
+    }
+
+    async function loadDataSourceConfig() {
+      const response = await fetch("/api/data-sources/config");
+      const payload = await response.json();
+      const mcp = payload.mcp || {};
+      if ($("settingsMcpUrl")) $("settingsMcpUrl").value = mcp.url || "";
+      if ($("settingsMcpAuthHeader")) $("settingsMcpAuthHeader").value = mcp.authHeaderName || "x-api-key";
+      if ($("settingsMcpApiKey")) $("settingsMcpApiKey").placeholder = mcp.authConfigured ? "已保存，留空不覆盖" : "可留空";
+      if ($("settingsLocalDataFolder")) $("settingsLocalDataFolder").value = payload.localFolder || "";
+      if ($("dataSourceConfigStatus")) $("dataSourceConfigStatus").textContent = payload.updatedAt ? `已保存：${formatFileTime(payload.updatedAt)}` : "";
+      if ($("localDataSourceStatus")) {
+        $("localDataSourceStatus").textContent = payload.localFolder
+          ? (payload.localFolderExists ? "本地目录可访问。" : "目录暂不可访问，请检查路径。")
+          : "尚未配置本地目录。";
+      }
+      return payload;
+    }
+
+    async function scanLocalDataSources(localFolder) {
+      const status = $("localDataSourceStatus");
+      if (status) status.textContent = "正在扫描本地数据目录...";
+      const response = await fetch("/api/data-sources/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ localFolder: localFolder || $("settingsLocalDataFolder")?.value.trim() || "" })
+      });
+      const payload = await response.json();
+      renderLocalDataSourceScan(payload);
+      if (status) {
+        status.textContent = payload.error
+          ? payload.error
+          : `扫描完成：识别到 ${payload.fileCount || 0} 个数据文件。`;
+      }
+      return payload;
+    }
+
+    async function saveDataSourceConfig(event) {
+      event.preventDefault();
+      const payload = {
+        localFolder: $("settingsLocalDataFolder")?.value.trim() || "",
+        mcp: {
+          url: $("settingsMcpUrl")?.value.trim() || "",
+          authHeaderName: $("settingsMcpAuthHeader")?.value.trim() || "x-api-key"
+        }
+      };
+      const apiKey = $("settingsMcpApiKey")?.value.trim();
+      if (apiKey) payload.mcp.apiKey = apiKey;
+      const response = await fetch("/api/data-sources/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const saved = await response.json();
+      if (!response.ok || saved.error) throw new Error(saved.error || "数据源保存失败");
+      if ($("settingsMcpApiKey")) $("settingsMcpApiKey").value = "";
+      await loadDataSourceConfig();
+      if ($("dataSourceConfigStatus")) $("dataSourceConfigStatus").textContent = "数据源配置已保存。";
+    }
+
+    async function saveAndScanLocalDataSources(event) {
+      event.preventDefault();
+      await saveDataSourceConfig(event);
+      await scanLocalDataSources();
     }
 
     function setServerStatusDisplay(payload = {}, state = "checking", message = "") {
@@ -978,7 +1272,14 @@
     function readAiQuestionHistory() {
       try {
         const items = JSON.parse(localStorage.getItem(AI_CHAT_QUESTION_HISTORY_KEY) || "[]");
-        return Array.isArray(items) ? items.filter(item => item && item.question).slice(0, AI_CHAT_QUESTION_HISTORY_LIMIT) : [];
+        if (!Array.isArray(items)) return [];
+        return items.map(item => {
+          if (typeof item === "string") return { question: item, updatedAt: "" };
+          if (!item || typeof item !== "object") return null;
+          const question = String(item.question || item.message || item.content || item.text || "").trim();
+          if (!question) return null;
+          return { ...item, question };
+        }).filter(Boolean).slice(0, AI_CHAT_QUESTION_HISTORY_LIMIT);
       } catch (error) {
         return [];
       }
@@ -1004,9 +1305,8 @@
         return;
       }
       list.innerHTML = items.map(item => `
-        <button class="chat-history-item" type="button" data-ai-history-question="${escapeHtml(item.question)}">
+        <button class="chat-history-item" type="button" title="${escapeHtml(item.question)}" data-ai-history-question="${escapeHtml(item.question)}">
           <span class="chat-history-question">${escapeHtml(item.question)}</span>
-          <span class="chat-history-meta">${escapeHtml(formatQuestionHistoryTime(item.updatedAt))}</span>
         </button>
       `).join("");
     }
@@ -1018,6 +1318,346 @@
       items.unshift({ question: text, updatedAt: new Date().toISOString() });
       writeAiQuestionHistory(items);
       renderAiQuestionHistory();
+    }
+
+    function selectAiSideTab(tab) {
+      const panel = $("aiChatSidePanel");
+      if (!panel) return;
+      panel.dataset.tab = tab;
+      document.querySelectorAll("[data-ai-side-tab]").forEach(button => {
+        button.classList.toggle("active", button.dataset.aiSideTab === tab);
+      });
+    }
+
+    function setAiProfileExpanded(expanded) {
+      aiProfileExpanded = Boolean(expanded);
+      const page = $("page-4")?.querySelector(".workbench-page");
+      if (page) page.classList.toggle("ai-profile-expanded", aiProfileExpanded);
+      const button = document.querySelector("[data-ai-profile-expand]");
+      if (button) button.textContent = aiProfileExpanded ? "收起阅读" : "展开阅读";
+    }
+
+    function aiProfileValue(value, fallback = "-") {
+      const text = String(value ?? "").trim();
+      return text && !["n/a", "none", "null", "-"].includes(text.toLowerCase()) ? text : fallback;
+    }
+
+    function aiProfileSummaryLine(profile) {
+      const info = profile?.basicInfo || {};
+      return [
+        aiProfileValue(info.status, ""),
+        [aiProfileValue(info.gender, ""), aiProfileValue(info.age, "")].filter(Boolean).join(" / "),
+        aiProfileValue(info.level, ""),
+        aiProfileValue(info.title, "")
+      ].filter(Boolean).join(" · ") || "人员档案";
+    }
+
+    function aiProfileCompleteness(profile) {
+      const validation = profile?.validation || {};
+      const percent = Math.round(Number(validation.completeness || 0) * 100);
+      return Number.isFinite(percent) && percent > 0 ? `${percent}%` : "-";
+    }
+
+    function renderProfileRows(rows, columns, emptyText) {
+      if (!Array.isArray(rows) || !rows.length) {
+        return `<div class="ai-profile-empty"><span>${escapeHtml(emptyText || "暂无数据")}</span></div>`;
+      }
+      return `
+        <table class="ai-profile-table">
+          <thead><tr>${columns.map(column => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead>
+          <tbody>
+            ${rows.map(row => `
+              <tr>${columns.map(column => `<td>${escapeHtml(aiProfileValue(row[column.key]))}</td>`).join("")}</tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderAiProfileTimeline(rows, options = {}) {
+      const items = Array.isArray(rows) ? rows : [];
+      const emptyText = options.emptyText || "暂无记录";
+      if (!items.length) {
+        return `<div class="ai-profile-empty compact"><span>${escapeHtml(emptyText)}</span></div>`;
+      }
+      const className = [
+        "ai-profile-timeline",
+        options.compact ? "compact" : "",
+        options.variant ? `is-${options.variant}` : ""
+      ].filter(Boolean).join(" ");
+      return `
+        <div class="ai-profile-timeline-scroll" data-ai-profile-drag-scroll>
+          <div class="${className}">
+            ${items.map(item => {
+              const date = aiProfileValue(item[options.dateKey || "date"], "");
+              const title = aiProfileValue(item[options.titleKey || "value"]);
+              const detail = options.detailKey ? aiProfileValue(item[options.detailKey], "") : "";
+              const meta = options.metaKey ? aiProfileValue(item[options.metaKey], "") : "";
+              return `
+                <article class="ai-profile-timeline-item">
+                  <span class="ai-profile-timeline-dot" aria-hidden="true"></span>
+                  ${date ? `<span class="ai-profile-timeline-date">${escapeHtml(date)}</span>` : ""}
+                  <strong>${escapeHtml(title)}</strong>
+                  ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
+                  ${meta ? `<em>${escapeHtml(meta)}</em>` : ""}
+                </article>
+              `;
+            }).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAiProfileCycleTimeline(label, rows, emptyText) {
+      return `
+        <div class="ai-profile-cycle-block">
+          <span class="ai-profile-cycle-label">${escapeHtml(label)}</span>
+          ${renderAiProfileTimeline(rows, {
+            dateKey: "period",
+            titleKey: "value",
+            emptyText,
+            compact: true,
+            variant: "cycle"
+          })}
+        </div>
+      `;
+    }
+
+    function renderAiProfilePromotionTimeline(rows) {
+      return renderAiProfileTimeline(rows, {
+        dateKey: "date",
+        titleKey: "level",
+        detailKey: "reason",
+        emptyText: "暂无晋升记录",
+        variant: "promotion"
+      });
+    }
+
+    function renderAiProfileWorkTimeline(rows) {
+      return renderAiProfileTimeline(rows, {
+        dateKey: "date",
+        titleKey: "project",
+        emptyText: "暂无项目履历",
+        variant: "work"
+      });
+    }
+
+    function renderAiProfilePanel(profile) {
+      const target = $("aiProfilePanel");
+      if (!target) return;
+      if (!profile) {
+        target.innerHTML = `
+          <div class="ai-profile-empty">
+            <strong>尚未生成人员档案</strong>
+            <span>在输入框写姓名或工号后，点击“人才档案”。</span>
+          </div>
+        `;
+        return;
+      }
+      const info = profile.basicInfo || {};
+      const validation = profile.validation || {};
+      const mcpStatus = profile.source?.mcpStatus || {};
+      const tags = Array.isArray(profile.profileTags) ? profile.profileTags : [];
+      const recent = aiProfileCards.slice(0, 6);
+      const basicPairs = [
+        ["姓名", info.name],
+        ["工号", info.employeeId],
+        ["性别/年龄", [info.gender, info.age].filter(Boolean).join(" / ")],
+        ["状态", info.status],
+        ["所在部门", info.departmentPath],
+        ["职位", info.title],
+        ["职级", info.level],
+        ["序列", info.sequence],
+        ["司龄", info.tenure],
+        ["入职时间", info.hireDate],
+        ["学历", info.highestEducation],
+        ["毕业院校", info.graduationSchool]
+      ];
+      target.innerHTML = `
+        <div class="ai-profile-toolbar">
+          <div class="ai-profile-head">
+            <div>
+              <h2>${escapeHtml(aiProfileValue(info.name, "未命名人员"))}</h2>
+              <p>${escapeHtml(aiProfileSummaryLine(profile))}</p>
+            </div>
+            <span class="ai-profile-status ${mcpStatus.ok ? "" : "warn"}">${escapeHtml(mcpStatus.ok ? "MCP已校验" : "本地快照")}</span>
+          </div>
+          <div class="ai-profile-recent">
+            <div class="ai-profile-recent-title">最近查看人员</div>
+            <div class="ai-profile-chip-row">
+              ${recent.map(item => `
+                <button class="ai-profile-chip ${item.id === activeAiProfileId ? "active" : ""}" type="button" data-ai-profile-switch="${escapeHtml(item.id)}">${escapeHtml(item.basicInfo?.name || item.id)}</button>
+              `).join("") || `<span class="ai-profile-mini-chip">暂无</span>`}
+            </div>
+          </div>
+          <div class="ai-profile-actions">
+            <button class="primary" type="button" data-ai-profile-refresh>刷新档案</button>
+            <button type="button" data-ai-profile-copy>复制摘要</button>
+            <button type="button" data-ai-profile-expand>${aiProfileExpanded ? "收起阅读" : "展开阅读"}</button>
+          </div>
+        </div>
+        <div class="ai-profile-body">
+          <section class="ai-profile-section wide">
+            <div class="ai-profile-section-head">
+              <h3>基本资料</h3>
+              <span class="ai-profile-mini-chip">完整度 ${escapeHtml(aiProfileCompleteness(profile))}</span>
+            </div>
+            <div class="ai-profile-grid">
+              ${basicPairs.map(([key, value]) => `<span class="k">${escapeHtml(key)}</span><span>${escapeHtml(aiProfileValue(value))}</span>`).join("")}
+            </div>
+          </section>
+          <section class="ai-profile-section">
+            <div class="ai-profile-section-head">
+              <h3>人才标签</h3>
+              <span class="ai-profile-mini-chip">${tags.length || 0} 条</span>
+            </div>
+            <div class="ai-profile-tags">
+              ${tags.length ? tags.map(tag => `<span class="ai-profile-tag">${escapeHtml(tag)}</span>`).join("") : `<span class="ai-profile-mini-chip">暂无标签信息</span>`}
+            </div>
+          </section>
+          <section class="ai-profile-section wide">
+            <div class="ai-profile-section-head">
+              <h3>绩效与盘点</h3>
+              <span class="ai-profile-mini-chip">固定字段</span>
+            </div>
+            <div class="ai-profile-cycle-grid">
+              ${renderAiProfileCycleTimeline("绩效周期", profile.performance || [], "暂无绩效记录")}
+              ${renderAiProfileCycleTimeline("盘点周期", profile.talentReviews || [], "暂无人才盘点记录")}
+            </div>
+          </section>
+          <section class="ai-profile-section wide">
+            <div class="ai-profile-section-head">
+              <h3>晋升路径</h3>
+              <span class="ai-profile-mini-chip">${(profile.promotionHistory || []).length} 个节点</span>
+            </div>
+            ${renderAiProfilePromotionTimeline(profile.promotionHistory || [])}
+          </section>
+          <section class="ai-profile-section wide">
+            <div class="ai-profile-section-head">
+              <h3>项目履历</h3>
+              <span class="ai-profile-mini-chip">${(profile.workHistory || []).length} 条</span>
+            </div>
+            ${renderAiProfileWorkTimeline(profile.workHistory || [])}
+          </section>
+          <section class="ai-profile-section reading">
+            <div class="ai-profile-section-head">
+              <h3>员工评价</h3>
+              <span class="ai-profile-mini-chip">${(profile.comments || []).length} 条</span>
+            </div>
+            <div class="ai-profile-comments">
+              ${(profile.comments || []).length ? profile.comments.map(item => `
+                <div class="ai-profile-comment-item">
+                  <b>${escapeHtml([item.period, item.rating].filter(Boolean).join(" · ") || "评价记录")}</b>
+                  <p>${escapeHtml(item.managerComment || item.employeeSummary || "暂无评价正文")}</p>
+                </div>
+              `).join("") : `<span class="ai-profile-mini-chip">暂无员工评价</span>`}
+            </div>
+          </section>
+          <section class="ai-profile-section reading">
+            <div class="ai-profile-section-head">
+              <h3>AI评价与建议</h3>
+              <span class="ai-profile-mini-chip">固定模板</span>
+            </div>
+            <div class="ai-profile-summary">
+              ${(profile.aiSummary || []).map(item => `
+                <div class="ai-profile-summary-item">
+                  <b>${escapeHtml(item.title || "摘要")}</b>
+                  <p>${escapeHtml(item.content || "")}</p>
+                </div>
+              `).join("")}
+            </div>
+          </section>
+          <section class="ai-profile-section reading">
+            <div class="ai-profile-section-head">
+              <h3>数据校验</h3>
+              <span class="ai-profile-mini-chip">${escapeHtml((validation.missingFields || []).length ? "有缺失" : "已匹配")}</span>
+            </div>
+            <div class="ai-profile-validation">
+              <p>已匹配字段：${escapeHtml((validation.matchedFields || []).join("、") || "-")}</p>
+              <p>缺失字段：${escapeHtml((validation.missingFields || []).join("、") || "无")}</p>
+              <p>MCP状态：${escapeHtml(mcpStatus.message || "-")}</p>
+              <p>数据来源：${escapeHtml(profile.source?.profileSource || "-")}</p>
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function storeAiProfile(profile) {
+      if (!profile?.id) return;
+      aiProfileCards = [profile, ...aiProfileCards.filter(item => item.id !== profile.id)].slice(0, 12);
+      activeAiProfileId = profile.id;
+      renderAiProfilePanel(profile);
+    }
+
+    function activeAiProfile() {
+      return aiProfileCards.find(item => item.id === activeAiProfileId) || aiProfileCards[0] || null;
+    }
+
+    function renderAiProfileArtifact(profile) {
+      const info = profile?.basicInfo || {};
+      return `
+        <div class="ai-artifact-card">
+          <div class="ai-artifact-main">
+            <div>
+              <h3 class="ai-artifact-title">${escapeHtml(aiProfileValue(info.name, "人员档案"))}的人员档案已生成</h3>
+              <p class="ai-artifact-meta">来自 HRobot MCP 人才档案，已同步到右侧档案面板。</p>
+            </div>
+            <div class="ai-artifact-actions">
+              <button class="primary" type="button" data-ai-profile-open="${escapeHtml(profile.id)}">查看档案</button>
+            </div>
+          </div>
+          <div class="ai-artifact-followups">
+            <button type="button" data-ai-followup="解释${escapeHtml(info.name || "该员工")}的绩效波动">解释绩效波动</button>
+            <button type="button" data-ai-followup="分析${escapeHtml(info.name || "该员工")}的晋升节奏">分析晋升节奏</button>
+            <button type="button" data-ai-followup="生成${escapeHtml(info.name || "该员工")}的发展建议">生成发展建议</button>
+          </div>
+        </div>
+      `;
+    }
+
+    async function generatePersonProfileCard(messageOverride = "") {
+      const input = $("aiChatInput");
+      const button = $("aiPersonProfileBtn");
+      if (!input) return;
+      const explicitMessage = typeof messageOverride === "string" ? messageOverride : "";
+      const message = String(explicitMessage || input.value || "").trim();
+      if (!message) {
+        input.focus();
+        appendAiMessage("assistant", "请先输入姓名或工号，例如：梁显耀的人员信息，或 工号 2219。");
+        return;
+      }
+      if (button) button.disabled = true;
+      saveAiQuestionHistory(message);
+      appendAiMessage("user", `【人才档案】${message}`);
+      aiChatHistory.push({ role: "user", content: message });
+      appendAiMessage("assistant", "正在调用固定人员档案流程，并校验 MCP 人才档案字段...");
+      try {
+        const response = await fetch("/api/mcp/person-profile-card", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, history: aiChatHistory })
+        });
+        const payload = await response.json();
+        const waiting = $("aiChatLog").lastElementChild;
+        if (waiting) waiting.remove();
+        if (!response.ok || payload.error) {
+          appendAiMessage("assistant", payload.error || "人员档案生成失败。");
+          return;
+        }
+        storeAiProfile(payload.profile);
+        selectAiSideTab("profile");
+        setAiProfileExpanded(true);
+        appendAiMessage("assistant", payload.message || "人员档案已生成。", renderAiProfileArtifact(payload.profile));
+        aiChatHistory.push({ role: "assistant", content: payload.message || "人员档案已生成。" });
+        setHomeCount("homeAiQuestionCount", incrementLocalCount(HOME_AI_QUESTION_COUNT_KEY));
+      } catch (error) {
+        const waiting = $("aiChatLog").lastElementChild;
+        if (waiting) waiting.remove();
+        appendAiMessage("assistant", `人员档案生成失败：${error.message}`);
+      } finally {
+        if (button) button.disabled = false;
+      }
     }
 
     async function sendAiMessage(event) {
@@ -1044,44 +1684,6 @@
       aiChatHistory.push({ role: "assistant", content: reply });
       if (response.ok && !payload.error) {
         setHomeCount("homeAiQuestionCount", incrementLocalCount(HOME_AI_QUESTION_COUNT_KEY));
-      }
-    }
-
-    async function searchTalentFromMcp() {
-      const input = $("aiChatInput");
-      const button = $("aiTalentSearchBtn");
-      if (!input) return;
-      const message = input.value.trim();
-      if (!message) {
-        input.focus();
-        appendAiMessage("assistant", "请先输入姓名、工号或部门，例如：江晓伟近四个季度绩效，或 工号 2219。");
-        return;
-      }
-      if (button) button.disabled = true;
-      saveAiQuestionHistory(message);
-      appendAiMessage("user", `【人才检索】${message}`);
-      appendAiMessage("assistant", "正在强制调用 HRobot MCP 人才档案检索...");
-      try {
-        const response = await fetch("/api/mcp/talent-search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, history: aiChatHistory })
-        });
-        const payload = await response.json();
-        const waiting = $("aiChatLog").lastElementChild;
-        if (waiting) waiting.remove();
-        const reply = payload.message || payload.error || "MCP 未返回检索结果。";
-        appendAiMessage("assistant", reply);
-        if (response.ok && !payload.error) {
-          aiChatHistory.push({ role: "user", content: message });
-          aiChatHistory.push({ role: "assistant", content: reply });
-        }
-      } catch (error) {
-        const waiting = $("aiChatLog").lastElementChild;
-        if (waiting) waiting.remove();
-        appendAiMessage("assistant", `人才检索失败：${error.message}`);
-      } finally {
-        if (button) button.disabled = false;
       }
     }
 
@@ -1328,6 +1930,473 @@
         };
       }
       renderGeneratedReportDetail(currentReportDetail);
+    }
+
+    async function fetchTextAsset(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`资源读取失败：${url}`);
+      return response.text();
+    }
+
+    async function imageToDataUrl(src) {
+      const response = await fetch(src, { cache: "no-store" });
+      if (!response.ok) return src;
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function inlineCloneImages(root) {
+      const images = Array.from(root.querySelectorAll("img[src]"));
+      await Promise.all(images.map(async image => {
+        const src = image.getAttribute("src");
+        if (!src || src.startsWith("data:")) return;
+        try {
+          image.setAttribute("src", await imageToDataUrl(src));
+        } catch {
+          image.setAttribute("src", src);
+        }
+      }));
+    }
+
+    const staticCalibratorAnchorConfig = {
+      cadre: { group: "干部", title: "干部校准器" },
+      campus: { pools: ["校招生", "校招生人才池"], title: "校招生校准器" },
+      "mini-game": { pools: ["小游戏关键岗位", "关键岗位小游戏"], title: "小游戏关键岗位校准器" },
+      slg: { pools: ["SLG关键岗位", "关键岗位SLG"], title: "SLG关键岗位校准器" },
+      mmo: { pools: ["MMO关键岗位", "关键岗位MMO"], title: "MMO关键岗位校准器" },
+      "replace-12": { pools: ["优先处理池"], title: "1/2宫格优先处理池校准器" },
+      "replace-senior-risk": { pools: ["组织风险池"], title: "高职级待提升校准器" },
+      "replace-long-tenure": { pools: ["长期平台期人群", "长期平台期"], title: "长司龄低职级校准器" }
+    };
+    const staticReplacePoolModes = [
+      { pool: "优先处理池", label: "1/2宫格" },
+      { pool: "组织风险池", label: "高职级待提升" },
+      { pool: "长期平台期人群", label: "长司龄低职级" }
+    ];
+    const staticSequenceRoleKeywords = {
+      "制作人": ["制作人", "producer"],
+      "策划": ["策划"],
+      "客户端": ["客户端"],
+      "服务端": ["服务端"],
+      "美术": ["美术", "主美", "gui", "原画", "模型", "动作", "特效", "修图", "美宣", "技术美术", "设计师", "美术经理", "美术总监", "场景", "角色"],
+      "测试": ["测试"]
+    };
+
+    function staticProfileValue(person, key, fallback = "") {
+      return person?.profile?.[key] || person?.[key] || fallback;
+    }
+
+    function staticPersonTalentPools(person) {
+      const name = staticProfileValue(person, "name", person?.name || "");
+      return talentPools.filter(pool => (pool.members || []).includes(name)).map(pool => pool.name);
+    }
+
+    function staticResolvePoolName(candidates = []) {
+      const available = new Set(talentPools.map(pool => pool.name));
+      return candidates.find(name => available.has(name)) || candidates[0] || "";
+    }
+
+    function staticGridLabel(gridId) {
+      const grid = gridDefs.find(item => Number(item.id) === Number(gridId));
+      return grid ? `${grid.id} ${grid.name}` : "-";
+    }
+
+    function staticPersonRoleText(person) {
+      return [
+        staticProfileValue(person, "sequence", ""),
+        staticProfileValue(person, "title", ""),
+        staticProfileValue(person, "position", ""),
+        staticProfileValue(person, "jobTitle", ""),
+        staticProfileValue(person, "职位", ""),
+        staticProfileValue(person, "职务", "")
+      ].join(" ").toLowerCase();
+    }
+
+    function staticMatchesSequence(person, sequenceName = "") {
+      const names = String(sequenceName || "")
+        .split(/[\/,，、；;\n\r]+/)
+        .map(name => name.trim())
+        .filter(Boolean);
+      if (!names.length) return true;
+      const sequence = String(staticProfileValue(person, "sequence", "")).trim();
+      const roleText = staticPersonRoleText(person);
+      return names.some(name => {
+        if (sequence === name) return true;
+        const keywords = staticSequenceRoleKeywords[name] || [];
+        if (keywords.length) return keywords.some(keyword => roleText.includes(String(keyword).toLowerCase()));
+        return roleText.includes(name.toLowerCase());
+      });
+    }
+
+    function staticCalibratorItems(anchor, mode = {}) {
+      const config = staticCalibratorAnchorConfig[anchor] || {};
+      const poolName = Object.prototype.hasOwnProperty.call(mode, "pool")
+        ? String(mode.pool || "")
+        : staticResolvePoolName(config.pools || []);
+      return people.filter(person => {
+        if (config.group && staticProfileValue(person, "group") !== config.group) return false;
+        if (poolName && !staticPersonTalentPools(person).includes(poolName)) return false;
+        if (mode.sequence && !staticMatchesSequence(person, mode.sequence)) return false;
+        return true;
+      });
+    }
+
+    function staticCalibratorModeKey(mode = {}) {
+      if (Object.prototype.hasOwnProperty.call(mode, "pool")) return `pool:${mode.pool || ""}`;
+      if (mode.sequence) return `sequence:${mode.sequence}`;
+      return "default";
+    }
+
+    function staticCalibratorModeLabel(config, mode = {}) {
+      if (Object.prototype.hasOwnProperty.call(mode, "pool")) return mode.label || mode.pool || "干部池";
+      if (mode.sequence) return mode.label || mode.sequence;
+      return config.title || "校准器";
+    }
+
+    function staticDefaultButtonLabel(anchor) {
+      if (anchor === "campus") return "校招生池";
+      if (["mini-game", "slg", "mmo"].includes(anchor)) return "全部";
+      return "";
+    }
+
+    function staticGeneratedModeButtons(anchor, hasDefaultButton) {
+      if (["replace-12", "replace-senior-risk", "replace-long-tenure"].includes(anchor)) {
+        const ownPool = staticResolvePoolName((staticCalibratorAnchorConfig[anchor] || {}).pools || []);
+        return staticReplacePoolModes
+          .slice()
+          .sort((a, b) => Number(b.pool === ownPool) - Number(a.pool === ownPool))
+          .map(mode => ({ ...mode, type: "pool" }));
+      }
+      const label = staticDefaultButtonLabel(anchor);
+      return label && !hasDefaultButton ? [{ label, type: "default" }] : [];
+    }
+
+    function buildStaticCalibratorHtml(anchor, mode = {}) {
+      const config = staticCalibratorAnchorConfig[anchor] || {};
+      const items = staticCalibratorItems(anchor, mode);
+      const total = items.length || 0;
+      const countsByGrid = items.reduce((counts, person) => {
+        const gridId = Number(person.gridCurrent);
+        counts.set(gridId, (counts.get(gridId) || 0) + 1);
+        return counts;
+      }, new Map());
+      const cellHtml = gridDefs.map(grid => {
+        const inGrid = items
+          .filter(person => Number(person.gridCurrent) === grid.id)
+          .sort((a, b) => String(staticProfileValue(a, "name", a.name || "")).localeCompare(String(staticProfileValue(b, "name", b.name || "")), "zh-Hans-CN"));
+        const actual = total ? Math.round((countsByGrid.get(grid.id) || 0) / total * 100) : 0;
+        return `
+          <section class="cell" data-grid="${grid.id}" data-band="${grid.band}">
+            <div class="cell-head">
+              <div class="cell-title">
+                <span class="num">${grid.id}</span>
+                <h2>${escapeHtml(grid.name)}</h2>
+              </div>
+              <span class="ratio"><span>建议 ${grid.ratio}%</span><span>实际 ${actual}%</span></span>
+            </div>
+            <p class="cell-note">${escapeHtml(grid.hint)}</p>
+            <div class="people">${inGrid.length ? inGrid.map(person => `
+              <article class="person" title="${escapeHtml(staticProfileValue(person, "name", person.name || ""))} ${escapeHtml(staticProfileValue(person, "level", ""))}">
+                <span class="person-name">${escapeHtml(staticProfileValue(person, "name", person.name || ""))}</span>
+                <span class="person-level">${escapeHtml(staticProfileValue(person, "level", "-"))}</span>
+              </article>
+            `).join("") : `<div class="empty">暂无人员</div>`}</div>
+          </section>
+        `;
+      }).join("");
+
+      return `
+        <div class="static-calibrator-title">
+          <span>${escapeHtml(staticCalibratorModeLabel(config, mode))}</span>
+          <b>${total}人</b>
+        </div>
+        <div class="workspace profile-collapsed report-inline-workspace static-report-calibrator">
+          <main class="main">
+            <section class="matrix-area">
+              <div class="axis-title-y">绩效</div>
+              <div class="axis-y"><div>高</div><div>中</div><div>低</div></div>
+              <div class="matrix">${cellHtml}</div>
+              <div></div>
+              <div class="axis-x"><div>低</div><div>中</div><div>高</div></div>
+              <div class="axis-title-x">潜能</div>
+            </section>
+          </main>
+        </div>
+      `;
+    }
+
+    function fillStaticCalibrators(root) {
+      root.querySelectorAll(".talent-calibrator-card").forEach(card => {
+        const anchor = card.getAttribute("data-calibrator-anchor") || "";
+        const mount = card.querySelector(".talent-calibrator-inline-mount");
+        if (!mount) return;
+        const actions = card.querySelector(".talent-calibrator-actions") || card.querySelector(".talent-calibrator-copy");
+        const hasDefaultButton = Array.from(card.querySelectorAll("[data-calibrator-pool]"))
+          .some(button => (button.getAttribute("data-calibrator-pool") || "") === "");
+        staticGeneratedModeButtons(anchor, hasDefaultButton).forEach(mode => {
+          if (!actions) return;
+          const button = document.createElement("button");
+          button.className = "quick";
+          button.type = "button";
+          button.textContent = mode.label;
+          if (mode.type === "pool") {
+            button.setAttribute("data-calibrator-pool", mode.pool || "");
+          } else {
+            button.setAttribute("data-static-calibrator-default", "1");
+          }
+          if (mode.type === "default") {
+            actions.insertBefore(button, actions.querySelector(".quick"));
+          } else {
+            actions.appendChild(button);
+          }
+        });
+        const modes = [];
+        const seen = new Set();
+        const pushMode = mode => {
+          const key = staticCalibratorModeKey(mode);
+          if (seen.has(key)) return;
+          seen.add(key);
+          modes.push({ ...mode, key });
+        };
+        card.querySelectorAll("[data-static-calibrator-default]").forEach(button => {
+          pushMode({ label: button.textContent.trim() });
+        });
+        card.querySelectorAll("[data-calibrator-pool]").forEach(button => {
+          pushMode({
+            pool: button.getAttribute("data-calibrator-pool") || "",
+            label: button.textContent.trim()
+          });
+        });
+        card.querySelectorAll("[data-calibrator-sequence]").forEach(button => {
+          pushMode({
+            sequence: button.getAttribute("data-calibrator-sequence") || "",
+            label: button.textContent.trim()
+          });
+        });
+        pushMode({});
+        const activeKey = modes[0]?.key || "default";
+        card.querySelectorAll(".quick").forEach(button => {
+          const mode = button.hasAttribute("data-static-calibrator-default")
+            ? {}
+            : button.hasAttribute("data-calibrator-pool")
+            ? { pool: button.getAttribute("data-calibrator-pool") || "" }
+            : { sequence: button.getAttribute("data-calibrator-sequence") || "" };
+          const key = staticCalibratorModeKey(mode);
+          button.setAttribute("data-static-calibrator-key", key);
+          button.classList.toggle("active", key === activeKey);
+        });
+        mount.innerHTML = modes.map(mode => `
+          <div class="static-calibrator-view${mode.key === activeKey ? " active" : ""}" data-static-calibrator-view="${escapeHtml(mode.key)}">
+            ${buildStaticCalibratorHtml(anchor, mode)}
+          </div>
+        `).join("");
+        card.classList.add("open", "static-calibrator-card");
+      });
+    }
+
+    function buildTalentReportStaticStyle(cssText) {
+      return `${cssText}
+
+body.static-talent-report {
+  margin: 0;
+  min-width: 0;
+  background: #f4efe7;
+}
+
+.static-talent-report .app-shell,
+.static-talent-report .talent-deck {
+  min-height: 100vh;
+}
+
+.static-talent-report .talent-deck-nav {
+  position: static;
+}
+
+.static-talent-report .talent-deck-stage {
+  overflow: visible;
+  padding: 24px;
+}
+
+.static-talent-report .talent-slide {
+  display: none;
+  overflow: visible;
+}
+
+.static-talent-report .talent-slide.active {
+  display: grid;
+}
+
+.static-talent-report .talent-collapse-card {
+  overflow: visible;
+}
+
+.static-talent-report .talent-collapse-card summary {
+  cursor: default;
+}
+
+.static-talent-report .talent-calibrator-actions button:not(.quick),
+.static-talent-report .talent-calibrator-copy > button:not(.quick) {
+  display: none;
+}
+
+.static-talent-report .talent-calibrator-inline-mount:empty {
+  display: none;
+}
+
+.static-talent-report .static-calibrator-view {
+  display: none;
+}
+
+.static-talent-report .static-calibrator-view.active {
+  display: block;
+}
+
+.static-talent-report .static-calibrator-card {
+  align-items: start;
+}
+
+.static-talent-report .static-calibrator-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+  color: #2457d6;
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line);
+}
+
+.static-talent-report .static-calibrator-title b {
+  color: var(--deck-ink);
+  font-weight: var(--type-card-title-weight);
+}
+
+.static-talent-report .static-report-calibrator .person {
+  cursor: default;
+}
+
+@media print {
+  .static-talent-report .talent-deck-stage {
+    display: grid;
+    gap: 24px;
+    padding: 0;
+  }
+
+  .static-talent-report .talent-slide {
+    display: grid;
+    border: 0;
+    box-shadow: none;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .static-talent-report .talent-slide:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}
+`;
+    }
+
+    function buildTalentReportStaticScript() {
+      return `<script>
+(function () {
+  function setReportSlide(slideId) {
+    var id = slideId || "overall";
+    document.querySelectorAll("[data-report-slide]").forEach(function (button) {
+      button.classList.toggle("active", button.getAttribute("data-report-slide") === id);
+    });
+    document.querySelectorAll("[data-report-slide-panel]").forEach(function (panel) {
+      panel.classList.toggle("active", panel.getAttribute("data-report-slide-panel") === id);
+    });
+  }
+
+  document.querySelectorAll("[data-report-slide]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      setReportSlide(button.getAttribute("data-report-slide"));
+    });
+  });
+
+  document.querySelectorAll(".static-calibrator-card").forEach(function (card) {
+    card.querySelectorAll("[data-static-calibrator-key]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var key = button.getAttribute("data-static-calibrator-key") || "default";
+        card.querySelectorAll("[data-static-calibrator-key]").forEach(function (item) {
+          item.classList.toggle("active", item === button);
+        });
+        card.querySelectorAll("[data-static-calibrator-view]").forEach(function (view) {
+          view.classList.toggle("active", view.getAttribute("data-static-calibrator-view") === key);
+        });
+      });
+    });
+  });
+}());
+</script>`;
+    }
+
+    async function exportTalentReportStaticHtml() {
+      const button = $("exportTalentReportHtmlBtn");
+      const deck = document.querySelector("#page-11 .talent-deck");
+      if (!deck) return;
+      const originalText = button?.textContent || "";
+      if (button) {
+        button.disabled = true;
+        button.textContent = "正在导出...";
+      }
+      try {
+        if (typeof window.renderReportTool === "function") window.renderReportTool();
+        const clone = deck.cloneNode(true);
+        const activeSlide = clone.querySelector("[data-report-slide-panel].active")?.getAttribute("data-report-slide-panel") || "overall";
+        clone.querySelector(".talent-deck-export")?.remove();
+        clone.querySelectorAll("[data-report-slide-panel]").forEach(panel => {
+          panel.classList.toggle("active", panel.getAttribute("data-report-slide-panel") === activeSlide);
+        });
+        clone.querySelectorAll("[data-report-slide]").forEach(button => {
+          button.classList.toggle("active", button.getAttribute("data-report-slide") === activeSlide);
+        });
+        clone.querySelectorAll("details").forEach(detail => detail.setAttribute("open", ""));
+        clone.querySelectorAll("[id]").forEach(node => node.removeAttribute("id"));
+        clone.querySelectorAll("[onclick]").forEach(node => node.removeAttribute("onclick"));
+        fillStaticCalibrators(clone);
+        await inlineCloneImages(clone);
+        const cssLinks = Array.from(document.querySelectorAll("link[rel='stylesheet'][href]"));
+        const cssText = (await Promise.all(cssLinks.map(link => fetchTextAsset(link.href)))).join("\n\n");
+        const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2026人才盘点汇报</title>
+  <style>${buildTalentReportStaticStyle(cssText)}</style>
+</head>
+<body class="static-talent-report">
+  ${clone.outerHTML}
+  ${buildTalentReportStaticScript()}
+</body>
+</html>`;
+        const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        const link = document.createElement("a");
+        const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+        link.href = URL.createObjectURL(blob);
+        link.download = `2026人才盘点汇报-静态版-${date}.html`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      } catch (error) {
+        alert(`导出失败：${error.message}`);
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = originalText || "导出静态HTML";
+        }
+      }
     }
 
     function closeGeneratedReport() {
@@ -1718,6 +2787,21 @@
     $("multimodalConfigForm").addEventListener("submit", event => saveSettingsConfig("multimodal", event));
     $("imageConfigForm").addEventListener("submit", event => saveSettingsConfig("image", event));
     $("testImageConfigBtn").addEventListener("click", testImageConfig);
+    $("dataSourceConfigForm")?.addEventListener("submit", event => {
+      saveDataSourceConfig(event).catch(error => {
+        if ($("dataSourceConfigStatus")) $("dataSourceConfigStatus").textContent = `保存失败：${error.message}`;
+      });
+    });
+    $("localDataSourceScanForm")?.addEventListener("submit", event => {
+      saveAndScanLocalDataSources(event).catch(error => {
+        if ($("localDataSourceStatus")) $("localDataSourceStatus").textContent = `扫描失败：${error.message}`;
+      });
+    });
+    $("scanLocalDataSourceBtn")?.addEventListener("click", () => {
+      scanLocalDataSources().catch(error => {
+        if ($("localDataSourceStatus")) $("localDataSourceStatus").textContent = `扫描失败：${error.message}`;
+      });
+    });
     $("refreshServerStatusBtn").addEventListener("click", () => loadServerStatus().catch(() => {}));
     $("restartServerBtn").addEventListener("click", restartServer);
     $("appUpdateForm")?.addEventListener("submit", event => {
@@ -1811,7 +2895,78 @@
     $("posterPreviewCloseBtn").addEventListener("click", () => $("posterPreviewDialog").close());
     $("goSettingsFromDesign").addEventListener("click", () => switchPage(9));
     $("aiChatForm").addEventListener("submit", sendAiMessage);
-    $("aiTalentSearchBtn").addEventListener("click", searchTalentFromMcp);
+    $("aiPersonProfileBtn").addEventListener("click", () => generatePersonProfileCard());
+    document.querySelectorAll("[data-ai-side-tab]").forEach(button => {
+      button.addEventListener("click", () => selectAiSideTab(button.dataset.aiSideTab || "history"));
+    });
+    $("aiChatLog").addEventListener("click", event => {
+      const openProfile = event.target.closest("[data-ai-profile-open]");
+      if (openProfile) {
+        activeAiProfileId = openProfile.dataset.aiProfileOpen || activeAiProfileId;
+        renderAiProfilePanel(activeAiProfile());
+        selectAiSideTab("profile");
+        setAiProfileExpanded(true);
+        return;
+      }
+      const followup = event.target.closest("[data-ai-followup]");
+      if (followup) {
+        const input = $("aiChatInput");
+        input.value = followup.dataset.aiFollowup || "";
+        input.focus();
+      }
+    });
+    $("aiProfilePanel").addEventListener("click", event => {
+      const switchButton = event.target.closest("[data-ai-profile-switch]");
+      if (switchButton) {
+        activeAiProfileId = switchButton.dataset.aiProfileSwitch || "";
+        renderAiProfilePanel(activeAiProfile());
+        return;
+      }
+      if (event.target.closest("[data-ai-profile-expand]")) {
+        setAiProfileExpanded(!aiProfileExpanded);
+        return;
+      }
+      if (event.target.closest("[data-ai-profile-copy]")) {
+        const profile = activeAiProfile();
+        const info = profile?.basicInfo || {};
+        const text = `${info.name || ""} ${info.level || ""} ${info.title || ""}\n${aiProfileSummaryLine(profile)}\n完整度：${aiProfileCompleteness(profile)}`;
+        navigator.clipboard?.writeText(text).catch(() => {});
+        return;
+      }
+      if (event.target.closest("[data-ai-profile-refresh]")) {
+        const profile = activeAiProfile();
+        const info = profile?.basicInfo || {};
+        const input = $("aiChatInput");
+        input.value = `${info.employeeId || info.name || ""}的人员信息`;
+        generatePersonProfileCard();
+      }
+    });
+    $("aiProfilePanel").addEventListener("pointerdown", event => {
+      const scroller = event.target.closest("[data-ai-profile-drag-scroll]");
+      if (!scroller || event.button !== 0 || scroller.scrollWidth <= scroller.clientWidth) return;
+      const startX = event.clientX;
+      const startScrollLeft = scroller.scrollLeft;
+      let hasDragged = false;
+      const handleMove = moveEvent => {
+        const delta = moveEvent.clientX - startX;
+        if (Math.abs(delta) > 2) {
+          hasDragged = true;
+          scroller.classList.add("is-dragging");
+        }
+        scroller.scrollLeft = startScrollLeft - delta;
+        if (hasDragged) moveEvent.preventDefault();
+      };
+      const stopDrag = () => {
+        scroller.classList.remove("is-dragging");
+        scroller.removeEventListener("pointermove", handleMove);
+        scroller.removeEventListener("pointerup", stopDrag);
+        scroller.removeEventListener("pointercancel", stopDrag);
+      };
+      scroller.setPointerCapture?.(event.pointerId);
+      scroller.addEventListener("pointermove", handleMove);
+      scroller.addEventListener("pointerup", stopDrag, { once: true });
+      scroller.addEventListener("pointercancel", stopDrag, { once: true });
+    });
     $("aiChatHistoryList").addEventListener("click", event => {
       const item = event.target.closest("[data-ai-history-question]");
       if (!item) return;
@@ -1859,9 +3014,11 @@
     document.querySelectorAll("[data-report-slide]").forEach(button => {
       button.addEventListener("click", () => window.setReportPptSlide?.(button.dataset.reportSlide));
     });
-    $("reportCalibrationDrawerToggle")?.addEventListener("click", () => window.openReportCalibrationDrawer?.());
+    $("exportTalentReportHtmlBtn")?.addEventListener("click", () => {
+      exportTalentReportStaticHtml();
+    });
+    $("reportCalibrationDrawerToggle")?.addEventListener("click", () => window.toggleReportCalibrationDrawer?.());
     $("reportDrawerCloseBtn")?.addEventListener("click", () => window.closeReportCalibrationDrawer?.());
-    $("reportCalibrationBackdrop")?.addEventListener("click", () => window.closeReportCalibrationDrawer?.());
     $("reportDrawerTalentPoolSelect")?.addEventListener("change", event => {
       window.setReportDrawerTalentPoolFilter?.(event.target.value);
     });
@@ -1884,6 +3041,9 @@
     loadDesignPromptConfig().catch(error => {
       $("designPromptConfigStatus").textContent = `设计配置加载失败：${error.message}`;
     });
+    loadDataSourceConfig().catch(error => {
+      if ($("dataSourceConfigStatus")) $("dataSourceConfigStatus").textContent = `数据源配置加载失败：${error.message}`;
+    });
     loadAgentProjects().catch(error => {
       $("agentProjectStatus").textContent = `Agent 中心加载失败：${error.message}`;
     });
@@ -1891,12 +3051,25 @@
       if ($("appUpdateStatus")) $("appUpdateStatus").textContent = `更新配置加载失败：${error.message}`;
     });
     refreshHomeUsageStats();
+    initHomeIdentityParticles();
     renderAiQuestionHistory();
     loadAiConfig().catch(error => appendAiMessage("assistant", `AI 配置加载失败：${error.message}`));
     loadGeneratedReport().catch(() => {});
     loadReportAssets().catch(() => {});
     loadImportSources().catch(() => {});
-    loadPeople().catch(error => {
+
+    let talentReviewPeopleLoadStarted = false;
+    const reportTalentReviewPeopleLoadError = error => {
       $("profile").innerHTML = `<div class="reason-note">加载失败：${error.message}</div>`;
       if (typeof window.renderReportTool === "function") window.renderReportTool();
-    });
+    };
+    const requestTalentReviewPeopleLoad = loadPeopleFn => {
+      const loader = loadPeopleFn || window.loadPeople;
+      if (typeof loader !== "function" || talentReviewPeopleLoadStarted) return;
+      talentReviewPeopleLoadStarted = true;
+      loader().catch(reportTalentReviewPeopleLoadError);
+    };
+    document.addEventListener("hrobot:talent-review-ready", event => {
+      requestTalentReviewPeopleLoad(event.detail?.loadPeople);
+    }, { once: true });
+    requestTalentReviewPeopleLoad();

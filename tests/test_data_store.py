@@ -73,6 +73,19 @@ class DataStoreTests(unittest.TestCase):
         self.assertEqual(people[0]["profile"]["level"], "P7")
         self.assertEqual(people[1]["profile"], {})
 
+    def test_people_data_layer_combines_current_profile_and_project_record(self):
+        store = DataStore(self.data_dir)
+
+        context = store.people_data().analysis_context()
+        records = {item["employeeId"]: item for item in context["people"] if item.get("employeeId")}
+
+        self.assertEqual(context["model"], "employee-centered-v1")
+        self.assertIn("E001", records)
+        self.assertEqual(records["E001"]["current"]["level"], "P7")
+        self.assertEqual(records["E001"]["projects"]["talentReview"]["gridOriginal"], 5)
+        self.assertEqual(context["dataSources"]["currentProfiles"]["kind"], "daily_snapshot")
+        self.assertEqual(context["dataSources"]["talentReview"]["kind"], "project_snapshot")
+
     def test_overrides_change_current_grid_without_mutating_sources(self):
         store = DataStore(self.data_dir)
 
@@ -877,6 +890,40 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
         self.assertEqual(restarted_store.ai_config()["multimodal"]["apiKey"], "text-secret")
         self.assertEqual(restarted_store.ai_config()["image"]["apiKey"], "image-secret")
 
+    def test_data_source_config_status_does_not_expose_mcp_secret(self):
+        store = DataStore(self.data_dir)
+
+        status = store.save_mcp_config(
+            {
+                "url": "http://127.0.0.1:8000/mcp",
+                "authHeaderName": "Authorization",
+                "apiKey": "Bearer secret-token",
+            }
+        )
+
+        self.assertTrue(status["authConfigured"])
+        self.assertNotIn("secret-token", json.dumps(status, ensure_ascii=False))
+        self.assertEqual(store.mcp_config()["headers"]["Authorization"], "Bearer secret-token")
+
+    def test_local_data_source_scan_detects_talent_review_file(self):
+        store = DataStore(self.data_dir)
+        folder = self.data_dir / "local_sources"
+        folder.mkdir()
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["工号", "姓名", "九宫格位置", "校准后九宫格位置", "年度绩效"])
+        sheet.append(["E001", "张三", "5中坚力量", "7潜力之星", "A"])
+        workbook.save(folder / "2025人才盘点结果.xlsx")
+
+        payload = store.scan_local_data_sources(str(folder))
+
+        self.assertEqual(payload["fileCount"], 1)
+        self.assertEqual(payload["files"][0]["detectedType"], "talent_review")
+        self.assertIn("九宫格位置", payload["files"][0]["headers"])
+        self.assertIn("summary", payload)
+        self.assertIn("九宫格", " ".join(payload["summary"]["analysisOpportunities"]))
+        self.assertTrue(payload["summary"]["recommendations"])
+
     def test_ai_config_reads_legacy_flat_file_as_multimodal_config(self):
         (self.data_dir / "ai_config.json").write_text(
             json.dumps(
@@ -1189,6 +1236,66 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
         row = [cell.value for cell in next(exported.active.iter_rows(min_row=3, max_row=3))]
 
         self.assertEqual(row[3], "9超级明星")
+
+    def test_export_calibrated_excel_uses_roster_employee_id_for_synthetic_review_key(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["群体", "姓名", "组织全称", "职级", "年度绩效", "九宫格位置", "校准后九宫格位置"])
+        sheet.append(["干部", "Alice", "示例集团/运营部", "P7", "B", "7潜力之星", "7潜力之星"])
+        excel_path = self.data_dir / "review.xlsx"
+        workbook.save(excel_path)
+        store = DataStore(self.data_dir)
+        store.import_review_excel(excel_path, "review.xlsx")
+        (self.data_dir / "employee_manager_map.json").write_text(
+            json.dumps(
+                {
+                    "byEmployeeId": {"1001": {"employeeId": "1001", "name": "Alice"}},
+                    "byName": {"Alice": {"employeeId": "1001", "name": "Alice"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        template_dir = self.data_dir / "templates"
+        template_dir.mkdir()
+        template = Workbook()
+        template_sheet = template.active
+        template_sheet.append(["盘点结果导入模板"])
+        template_sheet.append(["*工号", "*姓名", "群体", "年度绩效", "*九宫格位置", "*校准后九宫格位置"])
+        template_sheet.append(["", "", "", "", "", ""])
+        template.save(template_dir / "盘点结果导入模板.xlsx")
+
+        output_path = store.export_calibrated_excel()
+        exported = load_workbook(output_path, data_only=True)
+        row = [cell.value for cell in next(exported.active.iter_rows(min_row=3, max_row=3))]
+
+        self.assertEqual(row[0], "1001")
+        self.assertNotIn("|", row[0])
+
+    def test_export_calibrated_excel_does_not_export_synthetic_review_key_as_employee_id(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["群体", "姓名", "组织全称", "职级", "年度绩效", "九宫格位置", "校准后九宫格位置"])
+        sheet.append(["干部", "Alice", "示例集团/运营部", "P7", "B", "7潜力之星", "7潜力之星"])
+        excel_path = self.data_dir / "review.xlsx"
+        workbook.save(excel_path)
+        store = DataStore(self.data_dir)
+        store.import_review_excel(excel_path, "review.xlsx")
+
+        template_dir = self.data_dir / "templates"
+        template_dir.mkdir()
+        template = Workbook()
+        template_sheet = template.active
+        template_sheet.append(["盘点结果导入模板"])
+        template_sheet.append(["*工号", "*姓名", "群体", "年度绩效", "*九宫格位置", "*校准后九宫格位置"])
+        template_sheet.append(["", "", "", "", "", ""])
+        template.save(template_dir / "盘点结果导入模板.xlsx")
+
+        output_path = store.export_calibrated_excel()
+        exported = load_workbook(output_path, data_only=True)
+        row = [cell.value for cell in next(exported.active.iter_rows(min_row=3, max_row=3))]
+
+        self.assertIn(row[0], (None, ""))
 
 
 class ProductionDataTests(unittest.TestCase):

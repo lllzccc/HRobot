@@ -11,17 +11,7 @@ from zipfile import ZipFile
 
 from openpyxl import load_workbook
 
-GRID_LABELS = {
-    1: "1问题员工",
-    2: "2差距员工",
-    3: "3基本胜任",
-    4: "4待发展者",
-    5: "5中坚力量",
-    6: "6熟练员工",
-    7: "7潜力之星",
-    8: "8绩效之星",
-    9: "9超级明星",
-}
+from app.shared.constants import GRID_LABELS
 
 
 class TalentReviewStoreMixin:
@@ -598,6 +588,8 @@ class TalentReviewStoreMixin:
             self._files_signature(self._profile_source_dirs(), "*.json", self.profile_path),
             self._path_signature(self.employee_map_path),
             self._path_signature(self.overrides_path),
+            self._path_signature(self.talent_pool_path),
+            self._path_signature(self.profile_notes_path),
         )
         cache_key = ("analysis_context", department or "")
         if not hasattr(self, "_cache"):
@@ -634,6 +626,8 @@ class TalentReviewStoreMixin:
             "overrides": self.overrides(),
             "people": slim_people,
         }
+        if hasattr(self, "people_data"):
+            context["peopleDataLayer"] = self.people_data().analysis_context(department=department)
         with self._cache_lock:
             self._cache[cache_key] = {"signature": signature, "value": context}
         return context
@@ -688,6 +682,43 @@ class TalentReviewStoreMixin:
         self.talent_pool_path.parent.mkdir(parents=True, exist_ok=True)
         self.talent_pool_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return payload
+
+    def profile_notes(self):
+        data = self._read_json(self.profile_notes_path, {"notes": {}})
+        notes = data.get("notes", {}) if isinstance(data, dict) else {}
+        return {
+            "version": data.get("version", "hrobot-profile-notes-v1") if isinstance(data, dict) else "hrobot-profile-notes-v1",
+            "updatedAt": data.get("updatedAt", "") if isinstance(data, dict) else "",
+            "notes": notes if isinstance(notes, dict) else {},
+        }
+
+    def save_profile_note(self, payload):
+        key = str(payload.get("employeeId") or payload.get("key") or payload.get("name") or "").strip()
+        if not key:
+            raise ValueError("缺少人员标识，无法保存备注。")
+        text = str(payload.get("text", "")).strip()
+        notes_payload = self.profile_notes()
+        notes = notes_payload.get("notes", {})
+        timestamp = datetime.now(timezone.utc).isoformat()
+        if text:
+            notes[key] = {
+                "employeeId": str(payload.get("employeeId") or "").strip(),
+                "name": str(payload.get("name") or "").strip(),
+                "departmentPath": str(payload.get("departmentPath") or "").strip(),
+                "text": text,
+                "updatedAt": timestamp,
+            }
+        else:
+            notes.pop(key, None)
+        saved = {
+            "version": "hrobot-profile-notes-v1",
+            "updatedAt": timestamp,
+            "notes": notes,
+        }
+        self.profile_notes_path.parent.mkdir(parents=True, exist_ok=True)
+        self.profile_notes_path.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._clear_cache()
+        return saved
 
     def save_overrides(self, changes):
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -793,17 +824,23 @@ class TalentReviewStoreMixin:
 
     def _employee_number_for_export(self, person):
         profile = person.get("profile") if isinstance(person.get("profile"), dict) else {}
+        raw = person.get("raw") if isinstance(person.get("raw"), dict) else {}
+        roster_info = self.employee_map().get("byName", {}).get(str(person.get("name") or raw.get("姓名") or "").strip(), {})
         for value in (
             profile.get("employeeId"),
             person.get("employeeNumber"),
             person.get("workNumber"),
             person.get("工号"),
-            person.get("raw", {}).get("工号") if isinstance(person.get("raw"), dict) else "",
+            raw.get("工号"),
+            raw.get("员工ID"),
+            raw.get("employeeId"),
+            roster_info.get("employeeId"),
         ):
             normalized = self._normalize_employee_id(value)
             if normalized:
                 return normalized
-        return self._normalize_employee_id(person.get("employeeId"))
+        fallback = self._normalize_employee_id(person.get("employeeId"))
+        return "" if "|" in fallback or "/" in fallback else fallback
 
     def _level_number(self, person):
         for value in (

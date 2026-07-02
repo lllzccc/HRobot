@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import csv
 import html as html_lib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -25,6 +27,8 @@ from zipfile import ZipFile
 
 from app.modules.agent_center import AgentCenterStoreMixin
 from app.modules.talent_review import TalentReviewStoreMixin
+from app.core.people import PeopleDataService
+from app.shared.constants import GRID_LABELS
 
 if getattr(sys, "frozen", False):
     if sys.stdout is None:
@@ -41,7 +45,7 @@ def app_root():
 
 ROOT = app_root()
 DATA_DIR = ROOT / "data"
-DEBUG_LOG_PATH = ROOT / "debug-5fda48.log"
+DEBUG_LOG_PATH = ROOT / "server-debug.log"
 
 
 def talent_snapshot_root(data_dir: Path):
@@ -53,10 +57,10 @@ def talent_snapshot_root(data_dir: Path):
 
 
 def _agent_debug_log(location, message, data=None, hypothesis_id=""):
-    # #region agent log
+    if os.environ.get("HROBOT_DEBUG") != "1":
+        return
     try:
         entry = {
-            "sessionId": "5fda48",
             "location": location,
             "message": message,
             "data": data or {},
@@ -67,7 +71,6 @@ def _agent_debug_log(location, message, data=None, hypothesis_id=""):
             log_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception:
         pass
-    # #endregion
 LOCAL_TZ = timezone(timedelta(hours=8))
 INTELLIGENCE_UPDATE_LOCK = threading.Lock()
 SERVER_STARTED_AT = datetime.now(LOCAL_TZ)
@@ -148,18 +151,6 @@ REPORT_PRESETS = {
             "历史变化、校准差异、培养、激励、保留建议和后续跟进动作。"
         ),
     },
-}
-
-GRID_LABELS = {
-    1: "1问题员工",
-    2: "2差距员工",
-    3: "3基本胜任",
-    4: "4待发展者",
-    5: "5中坚力量",
-    6: "6熟练员工",
-    7: "7潜力之星",
-    8: "8绩效之星",
-    9: "9超级明星",
 }
 
 DEFAULT_HOME_MEMO = {
@@ -275,10 +266,12 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
         self.review_path = self.data_dir / "talent_review_2026.json"
         self.profile_path = self.data_dir / "people_profiles.json"
         self.overrides_path = self.data_dir / "calibration_overrides.json"
+        self.profile_notes_path = self.data_dir / "profile_notes.json"
         self.employee_map_path = self.data_dir / "employee_manager_map.json"
         self.ai_config_path = self.data_dir / "ai_config.json"
         self.ai_secrets_path = self.data_dir / "local_ai_secrets.json"
         self.mcp_config_path = self.data_dir / "mcp_config.json"
+        self.data_source_config_path = self.data_dir / "data_sources.json"
         self.update_config_path = self.data_dir / "update_config.json"
         self.talent_pool_path = self.data_dir / "talent_pools.json"
         self.intelligence_path = self.data_dir / "intelligence.json"
@@ -305,6 +298,10 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
         self.report_html_dir = self.report_dir / "reports_html"
         self.generated_report_path = self.report_dir / "generated_report.json"
         self.report_history_path = self.report_dir / "generated_reports.json"
+        self._people_data_service = PeopleDataService(self)
+
+    def people_data(self):
+        return self._people_data_service
 
     def _review_source_dirs(self):
         return [self.review_source_dir, *self.legacy_review_source_dirs]
@@ -1609,18 +1606,263 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
             {
                 "url": "",
                 "headers": {},
+                "authHeaderName": "x-api-key",
             },
         )
         if not isinstance(saved, dict):
             saved = {}
         headers = saved.get("headers", {}) if isinstance(saved.get("headers", {}), dict) else {}
-        api_key = os.environ.get("HROBOT_MCP_API_KEY") or headers.get("x-api-key", "")
+        auth_header_name = str(saved.get("authHeaderName") or "x-api-key").strip() or "x-api-key"
+        api_key = os.environ.get("HROBOT_MCP_API_KEY") or headers.get(auth_header_name, "") or headers.get("x-api-key", "")
         return {
             "url": os.environ.get("HROBOT_MCP_URL") or saved.get("url", ""),
+            "authHeaderName": auth_header_name,
             "headers": {
-                **headers,
-                **({"x-api-key": api_key} if api_key else {}),
+                **{key: value for key, value in headers.items() if value},
+                **({auth_header_name: api_key} if api_key else {}),
             },
+        }
+
+    def mcp_config_status(self):
+        config = self.mcp_config()
+        auth_header_name = config.get("authHeaderName") or "x-api-key"
+        api_key = config.get("headers", {}).get(auth_header_name, "")
+        return {
+            "url": config.get("url", ""),
+            "authHeaderName": auth_header_name,
+            "authConfigured": bool(api_key),
+            "configured": bool(config.get("url")),
+        }
+
+    def save_mcp_config(self, config):
+        current = self.mcp_config()
+        auth_header_name = str(config.get("authHeaderName") or current.get("authHeaderName") or "x-api-key").strip() or "x-api-key"
+        url = str(config.get("url") or current.get("url") or "").strip()
+        incoming_key = str(config.get("apiKey") or "").strip()
+        headers = dict(current.get("headers", {}))
+        headers = {key: value for key, value in headers.items() if key != current.get("authHeaderName")}
+        if incoming_key:
+            headers[auth_header_name] = incoming_key
+        elif current.get("headers", {}).get(auth_header_name):
+            headers[auth_header_name] = current["headers"][auth_header_name]
+        payload = {
+            "url": url,
+            "authHeaderName": auth_header_name,
+            "headers": headers,
+            "updatedAt": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+        }
+        self.mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.mcp_config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return self.mcp_config_status()
+
+    def data_source_config(self):
+        saved = self._read_json(self.data_source_config_path, {}) if self.data_source_config_path.exists() else {}
+        if not isinstance(saved, dict):
+            saved = {}
+        local_folder = str(saved.get("localFolder") or "").strip()
+        return {
+            "localFolder": local_folder,
+            "localFolderExists": bool(local_folder and Path(local_folder).expanduser().exists()),
+            "updatedAt": str(saved.get("updatedAt") or ""),
+            "mcp": self.mcp_config_status(),
+        }
+
+    def save_data_source_config(self, config):
+        current = self.data_source_config()
+        local_folder = str(config.get("localFolder") or current.get("localFolder") or "").strip()
+        payload = {
+            "localFolder": local_folder,
+            "updatedAt": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+        }
+        self.data_source_config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.data_source_config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return self.data_source_config()
+
+    def _preview_table_headers(self, path: Path):
+        suffix = path.suffix.lower()
+        try:
+            if suffix in {".xlsx", ".xlsm"}:
+                from openpyxl import load_workbook
+                workbook = load_workbook(path, read_only=True, data_only=True)
+                sheet = workbook.active
+                headers = [str(cell.value or "").strip() for cell in next(sheet.iter_rows(max_row=1), [])]
+                workbook.close()
+                return [item for item in headers if item][:30]
+            if suffix == ".csv":
+                with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                    row = next(csv.reader(handle), [])
+                return [str(item or "").strip() for item in row if str(item or "").strip()][:30]
+            if suffix == ".json":
+                data = self._read_json(path, [])
+                sample = data[0] if isinstance(data, list) and data else data
+                return list(sample.keys())[:30] if isinstance(sample, dict) else []
+        except Exception as error:
+            _agent_debug_log(
+                "server.py:_preview_table_headers",
+                "failed to preview local source file",
+                {"path": str(path), "errorType": type(error).__name__, "error": str(error)},
+                "DATA_SOURCE_SCAN",
+            )
+        return []
+
+    def _classify_local_source_file(self, path: Path, headers):
+        text = " ".join([path.name, *headers]).lower()
+        rules = [
+            ("talent_review", ["九宫格", "人才盘点", "校准", "潜能", "无成长"]),
+            ("feedback_360", ["360", "他评", "自评", "上级", "同事", "下级"]),
+            ("performance", ["绩效", "performance", "年度评价", "考核"]),
+            ("employee_profile", ["员工", "工号", "姓名", "组织", "职级", "职位", "入职"]),
+            ("permission_scope", ["权限", "hrbp", "可见", "scope", "permission"]),
+            ("project_evaluation", ["项目", "复盘", "评价", "里程碑"]),
+            ("report_material", ["报告", "材料", "访谈", "纪要", "md", "markdown"]),
+        ]
+        for kind, keywords in rules:
+            if any(keyword.lower() in text for keyword in keywords):
+                return kind
+        return "unknown"
+
+    def _summarize_local_data_scan(self, files, folder: Path):
+        type_labels = {
+            "talent_review": "人才盘点",
+            "feedback_360": "干部360",
+            "performance": "绩效",
+            "employee_profile": "员工主档",
+            "permission_scope": "权限范围",
+            "project_evaluation": "项目评价",
+            "report_material": "报告材料",
+            "unknown": "待确认",
+        }
+        type_counts = {}
+        extension_counts = {}
+        folder_counts = {}
+        duplicate_names = {}
+        duplicate_size_names = {}
+        for item in files:
+            detected_type = item.get("detectedType") or "unknown"
+            type_counts[detected_type] = type_counts.get(detected_type, 0) + 1
+            extension = item.get("extension") or ""
+            extension_counts[extension] = extension_counts.get(extension, 0) + 1
+            parts = Path(item.get("relativePath") or item.get("name") or "").parts
+            top_folder = parts[0] if len(parts) > 1 else "根目录"
+            folder_counts[top_folder] = folder_counts.get(top_folder, 0) + 1
+            duplicate_names.setdefault(str(item.get("name") or "").lower(), []).append(item)
+            duplicate_size_names.setdefault((str(item.get("name") or "").lower(), item.get("size")), []).append(item)
+
+        known_count = sum(count for kind, count in type_counts.items() if kind != "unknown")
+        unknown_count = type_counts.get("unknown", 0)
+        readable_types = [
+            f"{type_labels.get(kind, kind)} {count} 个"
+            for kind, count in sorted(type_counts.items(), key=lambda pair: (-pair[1], pair[0]))
+            if count
+        ]
+        top_folders = [
+            f"{name}（{count}）"
+            for name, count in sorted(folder_counts.items(), key=lambda pair: (-pair[1], pair[0]))[:6]
+        ]
+        duplicate_name_groups = [
+            {"name": items[0].get("name"), "count": len(items)}
+            for items in duplicate_names.values()
+            if len(items) > 1 and items[0].get("name")
+        ][:8]
+        likely_duplicate_groups = [
+            {"name": items[0].get("name"), "count": len(items)}
+            for items in duplicate_size_names.values()
+            if len(items) > 1 and items[0].get("name")
+        ][:8]
+
+        opportunities = []
+        if type_counts.get("employee_profile"):
+            opportunities.append("员工画像与当前组织/职级/岗位分布")
+        if type_counts.get("talent_review"):
+            opportunities.append("年度人才盘点、九宫格分布、校准差异和人才池分析")
+        if type_counts.get("feedback_360"):
+            opportunities.append("干部360反馈、能力项强弱和上下级视角差异")
+        if type_counts.get("performance"):
+            opportunities.append("绩效趋势、绩效与九宫格/潜力交叉分析")
+        if type_counts.get("project_evaluation"):
+            opportunities.append("项目经历、项目评价和关键岗位人才复盘")
+        if type_counts.get("permission_scope"):
+            opportunities.append("HRBP 权限范围与可见数据边界校验")
+        if not opportunities and files:
+            opportunities.append("需要先确认文件类型和字段映射，再决定可做的分析")
+
+        structure_issues = []
+        if unknown_count:
+            structure_issues.append(f"有 {unknown_count} 个文件暂未识别类型，可能需要补充命名规范或字段映射。")
+        if folder_counts.get("根目录", 0) > max(5, len(files) * 0.4):
+            structure_issues.append("较多文件直接堆在根目录，后续按项目类型或年份维护会比较困难。")
+        if duplicate_name_groups:
+            names = "、".join(item["name"] for item in duplicate_name_groups[:3])
+            structure_issues.append(f"存在同名文件，例如 {names}，需要确认是否为重复版本或不同项目。")
+        if likely_duplicate_groups:
+            names = "、".join(item["name"] for item in likely_duplicate_groups[:3])
+            structure_issues.append(f"存在疑似重复文件，例如 {names}，文件名和大小相同。")
+        if len(folder_counts) > 12:
+            structure_issues.append("子目录较分散，建议收敛到稳定的数据分类目录。")
+        if not structure_issues:
+            structure_issues.append("未发现明显结构问题，建议继续补充字段映射和年度口径说明。")
+
+        recommendations = [
+            "建议固定一级目录：员工主档、人才盘点、干部360、绩效、项目评价、权限配置、报告材料。",
+            "建议文件名包含年份/项目/数据类型，例如 2025_人才盘点_校准结果.xlsx。",
+            "建议为核心表保留工号、姓名、组织路径、年份/项目节点，方便和 MCP 实时档案合并。",
+        ]
+        if unknown_count:
+            recommendations.append("对待确认文件做一次字段映射确认，确认后保存为可复用规则。")
+        if duplicate_name_groups or likely_duplicate_groups:
+            recommendations.append("清理重复文件或增加版本号，避免 AI 和报告生成引用过期数据。")
+
+        overview = (
+            f"本次扫描 {folder}，识别到 {len(files)} 个可用数据文件。"
+            f"其中 {known_count} 个可初步归类，{unknown_count} 个待确认。"
+            f"主要内容包括：{'、'.join(readable_types) if readable_types else '暂无明确分类'}。"
+        )
+        return {
+            "overview": overview,
+            "typeCounts": type_counts,
+            "typeBreakdown": [{"type": kind, "label": type_labels.get(kind, kind), "count": count} for kind, count in sorted(type_counts.items())],
+            "extensionCounts": extension_counts,
+            "topFolders": top_folders,
+            "analysisOpportunities": opportunities,
+            "structureIssues": structure_issues,
+            "recommendations": recommendations,
+            "duplicateNames": duplicate_name_groups,
+            "likelyDuplicates": likely_duplicate_groups,
+        }
+
+    def scan_local_data_sources(self, local_folder=None):
+        folder_text = str(local_folder or self.data_source_config().get("localFolder") or "").strip()
+        if not folder_text:
+            return {"error": "请先配置本地数据目录。", "files": []}
+        folder = Path(folder_text).expanduser()
+        if not folder.exists() or not folder.is_dir():
+            return {"error": f"本地数据目录不存在：{folder}", "files": []}
+        supported = {".xlsx", ".xlsm", ".csv", ".json", ".md", ".txt", ".pdf", ".docx"}
+        files = []
+        for path in sorted(folder.rglob("*"), key=lambda item: str(item))[:1000]:
+            if not path.is_file() or path.suffix.lower() not in supported:
+                continue
+            headers = self._preview_table_headers(path)
+            files.append(
+                {
+                    "name": path.name,
+                    "path": str(path),
+                    "relativePath": str(path.relative_to(folder)),
+                    "extension": path.suffix.lower(),
+                    "size": path.stat().st_size,
+                    "updatedAt": datetime.fromtimestamp(path.stat().st_mtime, LOCAL_TZ).isoformat(timespec="seconds"),
+                    "headers": headers,
+                    "detectedType": self._classify_local_source_file(path, headers),
+                }
+            )
+        summary = self._summarize_local_data_scan(files, folder)
+        return {
+            "localFolder": str(folder),
+            "fileCount": len(files),
+            "files": files[:300],
+            "summary": summary,
+            "truncated": len(files) > 300,
+            "scannedAt": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
         }
 
     def update_config(self):
@@ -2263,6 +2505,48 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def _should_disable_cache(self):
+        path = urlparse(getattr(self, "path", "")).path
+        return path in {"", "/", "/index.html"} or path.startswith("/static/")
+
+    def _static_no_cache_path(self):
+        path = urlparse(getattr(self, "path", "")).path
+        if path in {"", "/"}:
+            file_path = (ROOT / "index.html").resolve()
+        elif self._should_disable_cache():
+            file_path = Path(self.translate_path(path)).resolve()
+        else:
+            return None
+        root = ROOT.resolve()
+        if not file_path.is_relative_to(root) or not file_path.is_file():
+            return None
+        return file_path
+
+    def _send_static_no_cache(self, include_body=True):
+        file_path = self._static_no_cache_path()
+        if not file_path:
+            return False
+        stat = file_path.stat()
+        self.send_response(200)
+        self.send_header("Content-Type", self.guess_type(str(file_path)))
+        self.send_header("Content-Length", str(stat.st_size))
+        self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.end_headers()
+        if include_body:
+            with file_path.open("rb") as handle:
+                self.copyfile(handle, self.wfile)
+        return True
+
+    def do_HEAD(self):
+        if not self._allow_request():
+            return
+        if self._send_static_no_cache(include_body=False):
+            return
+        super().do_HEAD()
+
     def _client_is_local(self):
         host = (self.client_address[0] if self.client_address else "") or ""
         return host.startswith("127.") or host == "::1" or host == "localhost"
@@ -2634,6 +2918,305 @@ class Handler(SimpleHTTPRequestHandler):
         }
 
     @staticmethod
+    def _clean_text(value):
+        if value is None:
+            return ""
+        text = str(value).strip()
+        return "" if text.lower() in {"", "n/a", "none", "null", "-"} else text
+
+    @staticmethod
+    def _first_clean(*values):
+        for value in values:
+            text = Handler._clean_text(value)
+            if text:
+                return text
+        return ""
+
+    @staticmethod
+    def _extract_person_profile_query(text):
+        text = str(text or "").strip()
+        work_id_match = re.search(r"(?:工号|员工工号|employeeId|workId)[:：\s]*([0-9]{1,12})|\b([0-9]{3,12})\b", text, re.I)
+        names = []
+        blocked = {"人员", "员工", "档案", "信息", "资料", "查询", "查看", "分析", "人才", "绩效", "晋升", "履历"}
+        patterns = [
+            r"([\u4e00-\u9fff]{2,4})的(?:人员信息|个人信息|人员档案|个人档案|档案|资料|履历)",
+            r"(?:查询|查看|看看|生成|打开)\s*([\u4e00-\u9fff]{2,4})(?:的)?(?:人员信息|个人信息|人员档案|个人档案|档案|资料|履历)?",
+            r"(?:姓名|人员|员工)[:：\s]*([\u4e00-\u9fff]{2,4})",
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, text):
+                name = Handler._clean_text(match.group(1)).rstrip("的")
+                if name and name not in blocked and not any(token in name for token in blocked):
+                    names.append(name)
+        if not names:
+            compact = re.sub(r"(人员信息|个人信息|人员档案|个人档案|档案|资料|履历|查询|查看|生成|打开|的)", " ", text)
+            for token in re.findall(r"[\u4e00-\u9fff]{2,4}", compact):
+                if token not in blocked:
+                    names.append(token)
+        result = {}
+        if work_id_match:
+            result["workIds"] = [work_id_match.group(1) or work_id_match.group(2)]
+        if names:
+            result["names"] = list(dict.fromkeys(names))[:3]
+        return result
+
+    @staticmethod
+    def _profile_matches_query(person, arguments):
+        profile = person.get("profile") if isinstance(person.get("profile"), dict) else {}
+        employee_id = Handler._clean_text(person.get("employeeId") or profile.get("employeeId"))
+        name = Handler._clean_text(person.get("name") or profile.get("name"))
+        work_ids = {str(item) for item in arguments.get("workIds", [])}
+        names = {str(item) for item in arguments.get("names", [])}
+        if work_ids and employee_id in work_ids:
+            return True
+        if names and name in names:
+            return True
+        return False
+
+    @staticmethod
+    def _normalize_profile_tags(tags):
+        if isinstance(tags, dict):
+            values = []
+            for key, value in tags.items():
+                if isinstance(value, list):
+                    values.extend(Handler._clean_text(item) for item in value)
+                elif value:
+                    label = Handler._clean_text(key)
+                    text = Handler._clean_text(value)
+                    values.append(f"{label}：{text}" if label and text else text or label)
+            return [item for item in values if item]
+        if isinstance(tags, list):
+            return [Handler._clean_text(item) for item in tags if Handler._clean_text(item)]
+        text = Handler._clean_text(tags)
+        return [text] if text else []
+
+    @staticmethod
+    def _normalize_recent_performance(profile):
+        recent = profile.get("recentPerformance") or []
+        rows = []
+        if isinstance(recent, list):
+            for item in recent:
+                if isinstance(item, dict):
+                    period = Handler._first_clean(item.get("period"), item.get("name"), item.get("quarter"))
+                    value = Handler._first_clean(item.get("value"), item.get("managerRating"), item.get("rating"))
+                else:
+                    text = Handler._clean_text(item)
+                    if ":" in text:
+                        period, value = [part.strip() for part in text.split(":", 1)]
+                    elif "：" in text:
+                        period, value = [part.strip() for part in text.split("：", 1)]
+                    else:
+                        period, value = text, ""
+                if period or value:
+                    rows.append({"period": period, "value": value or "-"})
+        if not rows:
+            for item in (profile.get("performanceHistory") or [])[:6]:
+                if not isinstance(item, dict):
+                    continue
+                rows.append(
+                    {
+                        "period": Handler._first_clean(item.get("period"), item.get("quarter")),
+                        "value": Handler._first_clean(item.get("managerRating"), item.get("rating"), item.get("selfRating"), "-"),
+                    }
+                )
+        return rows[:6]
+
+    @staticmethod
+    def _normalize_talent_reviews(profile):
+        rows = []
+        for item in profile.get("talentReviewHistory") or []:
+            if not isinstance(item, dict):
+                continue
+            period = Handler._first_clean(item.get("period"), item.get("year"))
+            value = Handler._first_clean(item.get("value"), item.get("grid"), item.get("nineBox"))
+            if period or value:
+                rows.append({"period": period, "value": value or "-"})
+        return rows[:6]
+
+    @staticmethod
+    def _normalize_work_history(profile):
+        rows = []
+        for item in profile.get("workHistory") or []:
+            if isinstance(item, dict):
+                project = Handler._first_clean(item.get("project"), item.get("name"), item.get("title"))
+                date = Handler._first_clean(item.get("date"), item.get("period"), item.get("startDate"))
+            else:
+                text = Handler._clean_text(item)
+                if "：" in text:
+                    project, date = [part.strip() for part in text.split("：", 1)]
+                elif ":" in text:
+                    project, date = [part.strip() for part in text.split(":", 1)]
+                else:
+                    project, date = text, ""
+            if project:
+                rows.append({"project": project, "date": date})
+        return rows[:12]
+
+    @staticmethod
+    def _normalize_performance_comments(profile):
+        rows = []
+        for item in profile.get("performanceHistory") or []:
+            if not isinstance(item, dict):
+                continue
+            period = Handler._first_clean(item.get("period"), item.get("quarter"))
+            manager = Handler._clean_text(item.get("managerComment"))
+            employee = Handler._clean_text(item.get("employeeSummary"))
+            rating = Handler._first_clean(item.get("managerRating"), item.get("rating"), item.get("selfRating"))
+            if period or manager or employee:
+                rows.append({"period": period, "rating": rating, "managerComment": manager, "employeeSummary": employee})
+        return rows[:4]
+
+    @staticmethod
+    def _person_profile_validation(profile_card):
+        required = {
+            "姓名": profile_card["basicInfo"].get("name"),
+            "工号": profile_card["basicInfo"].get("employeeId"),
+            "部门": profile_card["basicInfo"].get("departmentPath"),
+            "职位": profile_card["basicInfo"].get("title"),
+            "职级": profile_card["basicInfo"].get("level"),
+            "序列": profile_card["basicInfo"].get("sequence"),
+            "绩效记录": profile_card.get("performance"),
+            "人才盘点": profile_card.get("talentReviews"),
+            "晋升路径": profile_card.get("promotionHistory"),
+            "项目履历": profile_card.get("workHistory"),
+        }
+        matched = [key for key, value in required.items() if bool(value)]
+        missing = [key for key, value in required.items() if not bool(value)]
+        return {
+            "matchedFields": matched,
+            "missingFields": missing,
+            "completeness": round(len(matched) / max(len(required), 1), 2),
+        }
+
+    def _person_profile_card_from_record(self, person, mcp_status=None):
+        profile = person.get("profile") if isinstance(person.get("profile"), dict) else {}
+        source = {**profile, **person}
+        name = self._first_clean(source.get("name"), profile.get("name"))
+        level = self._first_clean(source.get("level"), source.get("levelRaw"))
+        title = self._first_clean(source.get("title"))
+        recent_performance = self._normalize_recent_performance(source)
+        talent_reviews = self._normalize_talent_reviews(source)
+        promotion_history = [
+            {
+                "date": self._first_clean(item.get("date"), item.get("time")),
+                "level": self._first_clean(item.get("level"), item.get("jobLevel")),
+                "reason": self._first_clean(item.get("reason"), item.get("remark")),
+            }
+            for item in (source.get("promotionHistory") or [])
+            if isinstance(item, dict)
+        ][:12]
+        work_history = self._normalize_work_history(source)
+        comments = self._normalize_performance_comments(source)
+        latest_review = talent_reviews[0]["value"] if talent_reviews else ""
+        latest_perf = recent_performance[0]["value"] if recent_performance else ""
+        profile_card = {
+            "type": "person_profile_card",
+            "id": self._first_clean(source.get("employeeId"), name),
+            "basicInfo": {
+                "name": name,
+                "employeeId": self._first_clean(source.get("employeeId")),
+                "gender": self._first_clean(source.get("gender")),
+                "age": self._first_clean(source.get("age")),
+                "departmentPath": self._first_clean(source.get("departmentPath"), source.get("departmentPathRaw"), source.get("department")),
+                "title": title,
+                "level": level,
+                "sequence": self._first_clean(source.get("sequence")),
+                "status": self._first_clean(source.get("status")),
+                "employmentType": self._first_clean(source.get("employmentType")),
+                "hireDate": self._first_clean(source.get("hireDate")),
+                "tenure": self._first_clean(source.get("keyAttribute"), source.get("tenure"), source.get("司龄")),
+                "highestEducation": self._first_clean(source.get("highestEducation")),
+                "graduationSchool": self._first_clean(source.get("graduationSchool")),
+                "dataUpdatedAt": self._first_clean(source.get("dataUpdatedAt")),
+            },
+            "profileTags": self._normalize_profile_tags(source.get("profileTags")),
+            "performance": recent_performance,
+            "talentReviews": talent_reviews,
+            "promotionHistory": promotion_history,
+            "workHistory": work_history,
+            "comments": comments,
+            "aiSummary": [
+                {
+                    "title": "综合评价",
+                    "content": f"{name or '该员工'}{('，' + level) if level else ''}{('，' + title) if title else ''}。当前档案已匹配基础信息、绩效、盘点、晋升和履历字段，建议结合业务负责人反馈继续复核。",
+                },
+                {
+                    "title": "绩效与盘点",
+                    "content": f"最近绩效为{latest_perf or '暂无记录'}，最近人才盘点为{latest_review or '暂无记录'}。如需判断波动原因，应继续追问具体季度表现和项目背景。",
+                },
+                {
+                    "title": "发展建议",
+                    "content": "建议围绕关键项目交付、跨团队协作、可量化绩效指标和下一职级要求做结构化复盘。",
+                },
+            ],
+            "source": {
+                "profileSource": "HRobot MCP 人才档案快照",
+                "mcpStatus": mcp_status or {"checked": False, "ok": False, "message": "未触发实时 MCP 校验。"},
+            },
+        }
+        profile_card["validation"] = self._person_profile_validation(profile_card)
+        return profile_card
+
+    def _build_person_profile_card(self, query, history=None):
+        history_text = "\n".join(str(item.get("content", "")) for item in (history or [])[-4:] if isinstance(item, dict))
+        arguments = self._extract_person_profile_query(query) or self._extract_person_profile_query(history_text)
+        if not arguments:
+            arguments = self._extract_talent_search_arguments(query) or self._extract_talent_search_arguments(history_text)
+        if not arguments:
+            return {"error": "请在输入框里写清楚要生成档案的姓名或工号，例如：梁显耀的人员信息，或 工号 2219。"}
+
+        mcp_status = {"checked": True, "ok": False, "message": "MCP 未返回可用内容。"}
+        try:
+            mcp_result = self._mcp_call_tool("talent-profile-search", arguments)
+            mcp_status = {
+                "checked": True,
+                "ok": bool(self._clean_text(mcp_result)),
+                "message": "实时 MCP 校验通过。" if self._clean_text(mcp_result) else "MCP 返回为空。",
+                "preview": self._clean_text(mcp_result)[:600],
+            }
+        except Exception as error:
+            mcp_status = {"checked": True, "ok": False, "message": f"实时 MCP 校验失败：{error}"}
+            _agent_debug_log(
+                "server.py:_build_person_profile_card",
+                "MCP profile card validation failed",
+                {"arguments": arguments, "errorType": type(error).__name__, "error": str(error)},
+                "MCP_PROFILE_CARD",
+            )
+
+        searchable_people = []
+        seen_profile_ids = set()
+        for person in self.store.profiles():
+            if not isinstance(person, dict):
+                continue
+            profile = person.get("profile") if isinstance(person.get("profile"), dict) else person
+            key = self._first_clean(person.get("employeeId"), profile.get("employeeId"), person.get("name"), profile.get("name"))
+            if key in seen_profile_ids:
+                continue
+            seen_profile_ids.add(key)
+            searchable_people.append(person)
+        candidates = [person for person in searchable_people if self._profile_matches_query(person, arguments)]
+        if not candidates and arguments.get("names"):
+            names = set(arguments.get("names") or [])
+            candidates = [
+                person
+                for person in searchable_people
+                if isinstance(person, dict) and any(name and name in self._clean_text(person.get("name")) for name in names)
+            ]
+        if not candidates:
+            return {
+                "error": "未能在本地 HRobot 人才档案快照中匹配到该人员。请确认姓名或工号，或先同步/导入 MCP 人才档案快照。",
+                "arguments": arguments,
+                "mcpStatus": mcp_status,
+            }
+        card = self._person_profile_card_from_record(candidates[0], mcp_status=mcp_status)
+        return {
+            "message": f"已生成{card['basicInfo'].get('name') or '该员工'}的人员档案，右侧“人员档案”中可查看完整信息。",
+            "arguments": arguments,
+            "profile": card,
+            "matchCount": len(candidates),
+        }
+
+    @staticmethod
     def _image_request_payload(model, prompt, size):
         return {
             "model": model,
@@ -2642,7 +3225,7 @@ class Handler(SimpleHTTPRequestHandler):
             "n": 1,
         }
 
-    def _call_ai_model(self, messages, enable_mcp=False):
+    def _call_ai_model(self, messages, enable_mcp=False, timeout=300):
         config = self.store.ai_config()["multimodal"]
         if not (config.get("apiKey") and config.get("baseUrl") and config.get("model")):
             return {
@@ -2683,7 +3266,7 @@ class Handler(SimpleHTTPRequestHandler):
                 method="POST",
             )
             try:
-                with urlopen(request, timeout=300) as response:
+                with urlopen(request, timeout=timeout) as response:
                     data = json.loads(response.read().decode("utf-8"))
             except HTTPError as error:
                 detail = error.read().decode("utf-8", errors="replace")
@@ -2889,12 +3472,64 @@ class Handler(SimpleHTTPRequestHandler):
                 ]
             )
 
+    def _ai_summarize_data_source_scan(self, scan_payload):
+        if scan_payload.get("error"):
+            return None
+        if not self.store.ai_config_status().get("multimodal", {}).get("configured"):
+            return None
+        bounded = {
+            "localFolder": scan_payload.get("localFolder", ""),
+            "fileCount": scan_payload.get("fileCount", 0),
+            "summary": scan_payload.get("summary", {}),
+            "files": [
+                {
+                    "relativePath": item.get("relativePath", ""),
+                    "extension": item.get("extension", ""),
+                    "detectedType": item.get("detectedType", ""),
+                    "headers": (item.get("headers") or [])[:12],
+                    "size": item.get("size", 0),
+                }
+                for item in (scan_payload.get("files") or [])[:80]
+            ],
+        }
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是资深 HR 数据产品顾问。请基于本地文件夹扫描元数据，给 HR 用户一段简洁、可执行的数据盘点总结。"
+                    "不要逐条列文件。请覆盖：大概有哪些内容、文件数量、可做哪些分析或信息呈现、数据结构/文件夹治理问题、建议项。"
+                    "不要编造扫描结果之外的具体文件内容。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "请用中文输出 Markdown，结构为：总体判断、内容概况、可做分析、结构问题、建议项。\n\n"
+                    f"扫描元数据：\n{json.dumps(bounded, ensure_ascii=False)}"
+                ),
+            },
+        ]
+        try:
+            result = self._call_ai_model(messages, timeout=12)
+            message = str(result.get("message") or "").strip() if isinstance(result, dict) else ""
+            return message or None
+        except Exception as error:
+            _agent_debug_log(
+                "server.py:_ai_summarize_data_source_scan",
+                "AI scan summary failed",
+                {"errorType": type(error).__name__, "error": str(error)},
+                "DATA_SOURCE_SCAN",
+            )
+            return None
+
     def do_GET(self):
         if not self._allow_request():
             return
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+        if self._send_static_no_cache():
+            return
         if path == "/api/people":
             self._send_json({"people": self.store.people()})
             return
@@ -2904,11 +3539,21 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/profiles":
             self._send_json({"profiles": self.store.profiles()})
             return
+        if path == "/api/people/context":
+            department = (query.get("department") or [""])[0].strip() or None
+            self._send_json(self.store.people_data().analysis_context(department=department))
+            return
         if path == "/api/overrides":
             self._send_json(self.store.overrides())
             return
+        if path == "/api/profile-notes":
+            self._send_json(self.store.profile_notes())
+            return
         if path == "/api/ai/config":
             self._send_json(self.store.ai_config_status())
+            return
+        if path == "/api/data-sources/config":
+            self._send_json(self.store.data_source_config())
             return
         if path == "/api/server/status":
             self._send_json(server_status_payload())
@@ -2987,6 +3632,8 @@ class Handler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_DELETE(self):
+        if not self._allow_request():
+            return
         path = urlparse(self.path).path
         if path == "/api/report":
             payload = self._read_request_json()
@@ -3091,8 +3738,27 @@ class Handler(SimpleHTTPRequestHandler):
             changes = payload.get("changes", [])
             self._send_json(self.store.save_overrides(changes))
             return
+        if path == "/api/profile-notes":
+            try:
+                self._send_json(self.store.save_profile_note(payload))
+            except ValueError as error:
+                self._send_json({"error": str(error)}, status=400)
+            return
         if path == "/api/ai/config":
             self._send_json(self.store.save_ai_config(payload))
+            return
+        if path == "/api/data-sources/config":
+            mcp_payload = payload.get("mcp") if isinstance(payload.get("mcp"), dict) else {}
+            if mcp_payload:
+                self.store.save_mcp_config(mcp_payload)
+            self._send_json(self.store.save_data_source_config(payload))
+            return
+        if path == "/api/data-sources/scan":
+            scan_payload = self.store.scan_local_data_sources(payload.get("localFolder"))
+            ai_summary = self._ai_summarize_data_source_scan(scan_payload)
+            if ai_summary:
+                scan_payload["aiSummary"] = ai_summary
+            self._send_json(scan_payload)
             return
         if path == "/api/server/restart":
             status = server_status_payload()
@@ -3195,13 +3861,13 @@ class Handler(SimpleHTTPRequestHandler):
                 )
             self._send_json(self._call_ai_model(messages, enable_mcp=True))
             return
-        if path == "/api/mcp/talent-search":
+        if path == "/api/mcp/person-profile-card":
             query = (payload.get("message") or payload.get("query") or "").strip()
             if not query:
-                self._send_json({"error": "请输入要检索的姓名、工号或部门。"}, status=400)
+                self._send_json({"error": "请输入要生成档案的姓名或工号。"}, status=400)
                 return
-            result = self._forced_mcp_talent_search(query, payload.get("history", []))
-            self._send_json(result, status=502 if result.get("error") else 200)
+            result = self._build_person_profile_card(query, payload.get("history", []))
+            self._send_json(result, status=404 if result.get("error") else 200)
             return
         if path == "/api/ai/image/test":
             prompt = (payload.get("prompt") or "HRobot orange simple poster test").strip()
@@ -3267,7 +3933,6 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if report_type not in REPORT_PRESETS:
                 report_type = "talent-review"
-            import traceback as tb
             try:
                 msgs = self._build_report_messages(
                     instruction,
@@ -3284,7 +3949,14 @@ class Handler(SimpleHTTPRequestHandler):
                     result["report"] = self.store.save_generated_report(message, instruction, report_type)
                 self._send_json(result)
             except Exception as ex:
-                self._send_json({"error": f"报告生成异常: {type(ex).__name__}: {str(ex)}", "detail": tb.format_exc()}, status=500)
+                import traceback as tb
+                _agent_debug_log(
+                    "server.py:do_POST:/api/report/generate",
+                    "report generation failed",
+                    {"errorType": type(ex).__name__, "error": str(ex), "traceback": tb.format_exc()},
+                    "report-generate",
+                )
+                self._send_json({"error": "报告生成异常，请稍后重试或检查服务端日志。"}, status=500)
             return
         if path == "/api/report/html":
             try:

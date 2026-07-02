@@ -7,6 +7,37 @@
     const managerName = person => profileRawValue(person, "manager") || profileRawValue(person, "directManager") || profileRawValue(person, "直接上级") || "-";
     const profileRawValue = (person, key) => person.profile?.[key] || person[key] || "";
     const profileValue = (person, key, fallback = "-") => profileRawValue(person, key) || fallback;
+    const sequenceRoleKeywords = {
+      "制作人": ["制作人", "producer"],
+      "策划": ["策划"],
+      "客户端": ["客户端"],
+      "服务端": ["服务端"],
+      "美术": ["美术", "主美", "gui", "原画", "模型", "动作", "特效", "修图", "美宣", "技术美术", "设计师", "美术经理", "美术总监", "场景", "角色"],
+      "测试": ["测试"]
+    };
+    const personRoleText = person => [
+      profileValue(person, "sequence", ""),
+      profileValue(person, "title", ""),
+      profileRawValue(person, "position"),
+      profileRawValue(person, "jobTitle"),
+      profileRawValue(person, "职位"),
+      profileRawValue(person, "职务")
+    ].join(" ").toLowerCase();
+    function matchesSequenceFilter(person) {
+      if (!filters.sequence.size) return true;
+      const sequence = String(profileValue(person, "sequence", "")).trim();
+      const roleText = personRoleText(person);
+      return [...filters.sequence].some(selected => {
+        const name = String(selected || "").trim();
+        if (!name) return false;
+        if (sequence === name) return true;
+        const keywords = sequenceRoleKeywords[name] || [];
+        if (keywords.length) return keywords.some(keyword => roleText.includes(String(keyword).toLowerCase()));
+        return roleText.includes(name.toLowerCase());
+      });
+    }
+    const profileNoteKey = person => String(person?.employeeId || person?.name || "").trim();
+    const profileNoteFor = person => profileNotes[profileNoteKey(person)]?.text || "";
     const profilePerformanceHistory = person => {
       const history = person.profile?.performanceHistory || person.performanceHistory || [];
       return Array.isArray(history) ? history : [];
@@ -24,6 +55,17 @@
       if (explicit) return explicit;
       const review = profileTalentReviewHistory(person).find(item => String(item?.year || "").includes(String(year)));
       return parseGridFromValue(review?.value) || fallback;
+    };
+    const previousYearGrid = person => {
+      const parsed = parseGridFromValue(historicalGridValue(person, 2025, null));
+      return validGridId(parsed) ? Number(parsed) : null;
+    };
+    const previousYearMovement = person => {
+      const priorGrid = previousYearGrid(person);
+      const currentGrid = Number(person.gridCurrent);
+      if (!validGridId(priorGrid) || !validGridId(currentGrid)) return null;
+      const diff = currentGrid - priorGrid;
+      return diff === 0 ? null : diff;
     };
     const recentYearPerformanceValue = person => {
       if (person.performanceLatest) return person.performanceLatest;
@@ -100,7 +142,7 @@
     }
 
     function setReportPptSlide(slideId) {
-      const id = slideId || "overview";
+      const id = slideId || "overall";
       document.querySelectorAll("[data-report-slide]").forEach(button => {
         button.classList.toggle("active", button.dataset.reportSlide === id);
       });
@@ -129,6 +171,26 @@
       renderReportTool();
     }
 
+    function setReportDrawerGroupFilter(groupName = "") {
+      filters.group.clear();
+      if (groupName) filters.group.add(groupName);
+      updateFilterLabels();
+      render();
+      renderReportTool();
+    }
+
+    function setReportDrawerSequenceFilter(sequenceName = "") {
+      filters.sequence.clear();
+      String(sequenceName || "")
+        .split(/[\/,，、;；\n\r]+/)
+        .map(name => name.trim())
+        .filter(Boolean)
+        .forEach(name => filters.sequence.add(name));
+      updateFilterLabels();
+      render();
+      renderReportTool();
+    }
+
     function ensureReportCalibrationAnchor() {
       const workspace = $("workspace");
       if (!workspace || reportCalibrationAnchor) return;
@@ -140,24 +202,21 @@
       ensureReportCalibrationAnchor();
       const drawer = $("reportCalibrationDrawer");
       const mount = $("reportCalibrationMount");
-      const backdrop = $("reportCalibrationBackdrop");
       const workspace = $("workspace");
       if (!drawer || !mount || !workspace) return;
       mount.appendChild(workspace);
       workspace.classList.add("report-drawer-workspace");
+      drawer.hidden = false;
       drawer.classList.add("open");
       drawer.setAttribute("aria-hidden", "false");
-      if (backdrop) {
-        backdrop.hidden = false;
-        backdrop.classList.add("open");
-      }
+      const toggle = $("reportCalibrationDrawerToggle");
+      if (toggle) toggle.textContent = "隐藏校准器";
       renderReportDrawerTalentPoolFilter();
       render();
     }
 
     function closeReportCalibrationDrawer() {
       const drawer = $("reportCalibrationDrawer");
-      const backdrop = $("reportCalibrationBackdrop");
       const workspace = $("workspace");
       if (workspace && reportCalibrationAnchor?.parentNode) {
         workspace.classList.remove("report-drawer-workspace");
@@ -165,13 +224,82 @@
       }
       if (drawer) {
         drawer.classList.remove("open");
+        drawer.hidden = true;
         drawer.setAttribute("aria-hidden", "true");
       }
-      if (backdrop) {
-        backdrop.classList.remove("open");
-        backdrop.hidden = true;
-      }
+      const toggle = $("reportCalibrationDrawerToggle");
+      if (toggle) toggle.textContent = "显示校准器";
       render();
+    }
+
+    function restoreTalentReviewPage() {
+      closeReportCalibrationDrawer();
+      const page = $("page-3");
+      const restoreWorkspacePosition = () => {
+        const workspace = $("workspace");
+        const filters = page?.querySelector(".filters");
+        if (!workspace || !page || page.contains(workspace)) return;
+        workspace.classList.remove("report-drawer-workspace");
+        if (reportCalibrationAnchor?.parentNode) {
+          reportCalibrationAnchor.parentNode.insertBefore(workspace, reportCalibrationAnchor.nextSibling);
+        } else if (filters?.parentNode) {
+          filters.parentNode.insertBefore(workspace, filters.nextSibling);
+        } else {
+          page.appendChild(workspace);
+        }
+      };
+      const resetTalentReviewScroll = () => {
+        window.scrollTo(0, 0);
+        document.documentElement.scrollTop = 0;
+        document.body.scrollTop = 0;
+        document.querySelector(".content")?.scrollTo(0, 0);
+        page?.scrollTo?.(0, 0);
+        $("workspace")?.scrollTo?.(0, 0);
+        document.querySelector("#page-3 .main")?.scrollTo?.(0, 0);
+        document.querySelector("#page-3 .matrix-area")?.scrollIntoView({ block: "start", inline: "nearest" });
+      };
+      const ensureRendered = () => {
+        restoreWorkspacePosition();
+        const hasMatrixCells = document.querySelectorAll("#page-3 .matrix .cell").length >= 9;
+        if (!people.length || !hasMatrixCells) {
+          if (!restoreTalentReviewPage.loading) {
+            restoreTalentReviewPage.loading = true;
+            loadPeople()
+              .catch(error => {
+                $("profile").innerHTML = `<div class="reason-note">加载失败：${error.message}</div>`;
+              })
+              .finally(() => {
+                restoreTalentReviewPage.loading = false;
+              });
+          }
+          return;
+        }
+        render();
+      };
+      const healTalentReviewView = () => {
+        ensureRendered();
+        const matrixArea = document.querySelector("#page-3 .matrix-area");
+        const matrixRect = matrixArea?.getBoundingClientRect();
+        const matrixVisible = matrixRect && matrixRect.bottom > 80 && matrixRect.top < window.innerHeight - 80;
+        if (!matrixVisible || Math.abs((matrixRect?.top || 0)) > 24) {
+          resetTalentReviewScroll();
+        }
+      };
+      requestAnimationFrame(() => {
+        healTalentReviewView();
+      });
+      [160, 480].forEach(delay => {
+        setTimeout(healTalentReviewView, delay);
+      });
+    }
+
+    function toggleReportCalibrationDrawer() {
+      const drawer = $("reportCalibrationDrawer");
+      if (drawer && !drawer.hidden && drawer.classList.contains("open")) {
+        closeReportCalibrationDrawer();
+      } else {
+        openReportCalibrationDrawer();
+      }
     }
 
     async function saveReportDrawerCalibration() {
@@ -182,10 +310,16 @@
     window.renderReportTool = renderReportTool;
     window.setReportPptSlide = setReportPptSlide;
     window.setReportDrawerTalentPoolFilter = setReportDrawerTalentPoolFilter;
+    window.setReportDrawerGroupFilter = setReportDrawerGroupFilter;
+    window.setReportDrawerSequenceFilter = setReportDrawerSequenceFilter;
     window.renderReportDrawerTalentPoolFilter = renderReportDrawerTalentPoolFilter;
     window.openReportCalibrationDrawer = openReportCalibrationDrawer;
     window.closeReportCalibrationDrawer = closeReportCalibrationDrawer;
+    window.restoreTalentReviewPage = restoreTalentReviewPage;
+    window.toggleReportCalibrationDrawer = toggleReportCalibrationDrawer;
     window.saveReportDrawerCalibration = saveReportDrawerCalibration;
+    window.loadPeople = loadPeople;
+    document.dispatchEvent(new CustomEvent("hrobot:talent-review-ready", { detail: { loadPeople } }));
 
     function personTalentPools(person) {
       const name = reviewValue(person, "name", "");
@@ -561,6 +695,7 @@
       const response = await fetch("/api/people");
       const payload = await response.json();
       people = payload.people;
+      await loadProfileNotes();
       await loadTalentPools();
       if (!selectedId || !people.some(person => person.employeeId === selectedId)) {
         selectedId = null;
@@ -573,6 +708,36 @@
       render();
       updateCalibrationStepButtons();
       renderTalentSearch();
+    }
+
+    async function loadProfileNotes() {
+      try {
+        const response = await fetch("/api/profile-notes");
+        const payload = await response.json();
+        profileNotes = payload.notes && typeof payload.notes === "object" ? payload.notes : {};
+      } catch (error) {
+        profileNotes = {};
+      }
+    }
+
+    async function saveProfileNote(person, text) {
+      const key = profileNoteKey(person);
+      if (!key) return;
+      const response = await fetch("/api/profile-notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key,
+          employeeId: person.employeeId || "",
+          name: person.name || "",
+          departmentPath: profileValue(person, "departmentPath", ""),
+          text
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "备注保存失败");
+      profileNotes = payload.notes && typeof payload.notes === "object" ? payload.notes : {};
+      renderProfile();
     }
 
     function initFilters() {
@@ -602,7 +767,7 @@
         matches("group", reviewValue(person, "group")) &&
         matchesDepartment(person) &&
         matches("level", reviewValue(person, "level")) &&
-        matches("sequence", profileValue(person, "sequence")) &&
+        matchesSequenceFilter(person) &&
         (!filters.managerTeam.size || (managerChain(person).some(manager => filters.managerTeam.has(manager)) && !filters.managerTeam.has(person.name))) &&
         matches("growthWarning", currentGrowthWarning(person)) &&
         matches("aiAbility", currentAiAbility(person)) &&
@@ -723,7 +888,7 @@
         const count = items.filter(person => ids.includes(Number(person.gridCurrent))).length;
         const actual = Math.round(count / total * 100);
         const recommend = recommendOf(ids);
-        return `<div class="stat band"><strong>${label}：${count}人（${actual}%）</strong><div class="line"><span>建议</span><b>${recommend}%</b></div><div class="line"><span>实际</span><b>${actual}%</b></div></div>`;
+        return `<div class="stat band"><strong>${label}：${count}人（${actual}%）</strong><div class="band-ratios"><span>建议 <b>${recommend}%</b></span><span>实际 <b>${actual}%</b></span></div></div>`;
       };
       $("stats").innerHTML = [
         `<div class="stat"><strong>${items.length}</strong><span>当前筛选人数</span></div>`,
@@ -734,8 +899,8 @@
     }
 
     function personCard(person) {
-      const diff = movement(person);
-      const mark = diff === 0 ? "" : `<span class="move-mark ${diff > 0 ? "up" : "down"}">${diff > 0 ? "↑" : "↓"}</span>`;
+      const diff = previousYearMovement(person);
+      const mark = diff === null ? "" : `<span class="move-mark ${diff > 0 ? "up" : "down"}" title="${diff > 0 ? "较去年上升" : "较去年下降"}">${diff > 0 ? "↑" : "↓"}</span>`;
       return `
         <article class="person ${person.employeeId === selectedId ? "selected" : ""}" draggable="true" data-id="${person.employeeId}" title="${person.name} ${profileValue(person, "level")}">
           <span class="person-name">${person.name}</span>
@@ -836,11 +1001,22 @@
     }
 
     function renderMatrix(items) {
+      const total = items.length;
+      const countsByGrid = items.reduce((counts, person) => {
+        const gridId = Number(person.gridCurrent);
+        counts.set(gridId, (counts.get(gridId) || 0) + 1);
+        return counts;
+      }, new Map());
+      const actualRatio = gridId => {
+        if (!total) return 0;
+        return Math.round((countsByGrid.get(gridId) || 0) / total * 100);
+      };
       $("matrix").innerHTML = gridDefs.map(grid => {
         const inGrid = items
           .filter(person => Number(person.gridCurrent) === grid.id)
           .sort((a, b) => (levelWeight[profileValue(b, "level")] || 0) - (levelWeight[profileValue(a, "level")] || 0));
         const selected = selectedPerson() && Number(selectedPerson().gridCurrent) === grid.id ? "selected-cell" : "";
+        const actual = actualRatio(grid.id);
         return `
           <section class="cell ${selected}" data-grid="${grid.id}" data-band="${grid.band}">
             <div class="cell-head">
@@ -848,7 +1024,7 @@
                 <span class="num">${grid.id}</span>
                 <h2>${grid.name}</h2>
               </div>
-              <span class="ratio">建议 ${grid.ratio}%</span>
+              <span class="ratio"><span>建议 ${grid.ratio}%</span><span>实际 ${actual}%</span></span>
             </div>
             <p class="cell-note">${grid.hint}</p>
             <div class="people">${inGrid.length ? inGrid.map(personCard).join("") : `<div class="empty">暂无人员</div>`}</div>
@@ -991,12 +1167,11 @@
       const recentYearPerformance = recentYearPerformanceValue(person);
       const annualPerformanceReview = annualPerformanceReviewValue(person);
       const supervisorAdjustments = supervisorAdjustmentItems(person);
+      const profileNote = profileNoteFor(person);
       const supervisorAdjustmentHtml = supervisorAdjustments.length ? `
         <section class="section">
           <h4>上级调整</h4>
-          <div class="history">
-            ${supervisorAdjustments.map(item => `<span class="pill">上级有调整：【${escapeHtml(item.label)}】${escapeHtml(item.from)}-${escapeHtml(item.to)}</span>`).join("")}
-          </div>
+          <div class="history profile-history-text">${supervisorAdjustments.map(item => `上级有调整：【${escapeHtml(item.label)}】${escapeHtml(item.from)}-${escapeHtml(item.to)}`).join(" | ")}</div>
         </section>
       ` : "";
       $("profile").innerHTML = `
@@ -1008,6 +1183,15 @@
           </div>
           <div class="profile-sub">${profileValue(person, "departmentPath")} / ${profileValue(person, "title")}</div>
         </div>
+
+        <section class="section profile-note-section">
+          <div class="profile-note-head">
+            <h4>临时备注</h4>
+            <button class="primary profile-note-save" id="profileNoteSaveBtn" type="button">保存备注</button>
+          </div>
+          <textarea id="profileNoteInput" class="profile-note-input">${escapeHtml(profileNote)}</textarea>
+          <p class="reason-note profile-note-status" id="profileNoteStatus">${profileNote ? `上次保存：${escapeHtml(profileNotes[profileNoteKey(person)]?.updatedAt || "-")}` : "未填写临时备注"}</p>
+        </section>
 
         <section class="section">
           <h4>基本信息</h4>
@@ -1033,7 +1217,7 @@
 
         <section class="section">
           <h4>近三年落格</h4>
-          <div class="history">${history.map(([year, grid]) => `<span class="pill">${year}: ${gridLabel(grid)}</span>`).join("") || `<span class="reason-note">无记录</span>`}</div>
+          <div class="history profile-history-text">${history.map(([year, grid]) => `${escapeHtml(year)}: ${escapeHtml(gridLabel(grid))}`).join(" | ") || `<span class="reason-note">无记录</span>`}</div>
         </section>
 
         ${supervisorAdjustmentHtml}
@@ -1042,9 +1226,7 @@
           <h4>26年校准</h4>
           <div class="flow">
             <div class="change-line">
-              <span class="from"><span class="grid-chip grid-${person.gridOriginal}">${person.gridOriginal}</span> ${gridLabel(person.gridOriginal)}</span>
-              <span class="arrow ${arrowClass}">${arrow}</span>
-              <span class="to"><span class="grid-chip grid-${person.gridCurrent}">${person.gridCurrent}</span> ${gridLabel(person.gridCurrent)}</span>
+              <span class="calibration-grid-text"><span>${gridLabel(person.gridOriginal)}</span><span class="calibration-grid-arrow">→</span><span>${gridLabel(person.gridCurrent)}</span></span>
             </div>
             <div class="flow-row"><span>校准后</span><select id="gridSelect">${gridDefs.slice().sort((a, b) => a.id - b.id).map(grid => `<option value="${grid.id}" ${Number(person.gridCurrent) === grid.id ? "selected" : ""}>${grid.id} ${grid.name}</option>`).join("")}</select></div>
             <div class="flow-row"><span>变化</span><span>${movementLabel(person)}</span></div>
@@ -1084,6 +1266,18 @@
         </section>
       `;
 
+      $("profileNoteSaveBtn").addEventListener("click", async () => {
+        const button = $("profileNoteSaveBtn");
+        const status = $("profileNoteStatus");
+        button.disabled = true;
+        status.textContent = "正在保存备注...";
+        try {
+          await saveProfileNote(person, $("profileNoteInput").value);
+        } catch (error) {
+          status.textContent = `保存失败：${error.message}`;
+          button.disabled = false;
+        }
+      });
       $("gridSelect").addEventListener("change", event => movePerson(person.employeeId, event.target.value));
       $("aiSelect").addEventListener("change", event => {
         if (person.aiAbilityCalibrated === event.target.value) return;
