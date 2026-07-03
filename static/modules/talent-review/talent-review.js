@@ -127,7 +127,7 @@
     }
 
     function renderReportTool() {
-      if (!$("page-11")) return;
+      if (!document.querySelector("[data-ppt-metric]")) return;
       const { total, byGrid } = reportToolDistribution();
       const high = reportToolCountOf([7, 8, 9]);
       const core = reportToolCountOf([4, 5, 6]);

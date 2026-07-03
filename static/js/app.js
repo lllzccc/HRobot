@@ -52,27 +52,7 @@
       supervisorAdjusted: new Set(),
       calibrationDiff: new Set()
     };
-    const builtInAgentProjects = [
-      {
-        id: "builtin-talent-report-2026",
-        name: "2026人才盘点汇报",
-        description: "内置盘点汇报工具，集中查看总览、干部、关键岗位、校招生、汰换待提升与人才策略。",
-        runtime: "builtin",
-        builtIn: true,
-        fileCount: 1,
-        size: 0,
-        analysis: {
-          runtimeLabel: "内置工具",
-          confidence: 1,
-          source: "builtin"
-        },
-        environment: {
-          canOpen: true,
-          label: "本机可打开",
-          message: "点击后在当前工作台打开。"
-        }
-      }
-    ];
+    const builtInAgentProjects = [];
 
     const $ = id => document.getElementById(id);
     const HOME_AI_QUESTION_COUNT_KEY = "hrobot.aiQuestionCount";
@@ -614,12 +594,6 @@
 
     async function openAgentProject(projectId) {
       const status = $("agentProjectStatus");
-      if (builtInAgentProjects.some(project => project.id === projectId)) {
-        if (status) status.textContent = "已打开 2026人才盘点汇报。";
-        switchPage(11);
-        document.querySelector('[data-page="10"]')?.classList.add("active");
-        return;
-      }
       if (status) status.textContent = "正在打开独立项目...";
       const blankWindow = window.open("about:blank", "_blank");
       if (blankWindow) {
@@ -694,8 +668,6 @@
       if (String(page) === "9") loadAiConfig().catch(error => {
         $("multimodalConfigStatus").textContent = `配置加载失败：${error.message}`;
       });
-      if (String(page) === "11" && typeof window.renderReportTool === "function") window.renderReportTool();
-      if (String(page) !== "11" && typeof window.closeReportCalibrationDrawer === "function") window.closeReportCalibrationDrawer();
       if (String(page) === "3" && typeof window.restoreTalentReviewPage === "function") window.restoreTalentReviewPage();
     }
 
@@ -2469,65 +2441,6 @@ body.static-talent-report {
 </script>`;
     }
 
-    async function exportTalentReportStaticHtml() {
-      const button = $("exportTalentReportHtmlBtn");
-      const deck = document.querySelector("#page-11 .talent-deck");
-      if (!deck) return;
-      const originalText = button?.textContent || "";
-      if (button) {
-        button.disabled = true;
-        button.textContent = "正在导出...";
-      }
-      try {
-        if (typeof window.renderReportTool === "function") window.renderReportTool();
-        const clone = deck.cloneNode(true);
-        const activeSlide = clone.querySelector("[data-report-slide-panel].active")?.getAttribute("data-report-slide-panel") || "overall";
-        clone.querySelector(".talent-deck-export")?.remove();
-        clone.querySelectorAll("[data-report-slide-panel]").forEach(panel => {
-          panel.classList.toggle("active", panel.getAttribute("data-report-slide-panel") === activeSlide);
-        });
-        clone.querySelectorAll("[data-report-slide]").forEach(button => {
-          button.classList.toggle("active", button.getAttribute("data-report-slide") === activeSlide);
-        });
-        clone.querySelectorAll("details").forEach(detail => detail.setAttribute("open", ""));
-        clone.querySelectorAll("[id]").forEach(node => node.removeAttribute("id"));
-        clone.querySelectorAll("[onclick]").forEach(node => node.removeAttribute("onclick"));
-        fillStaticCalibrators(clone);
-        await inlineCloneImages(clone);
-        const cssLinks = Array.from(document.querySelectorAll("link[rel='stylesheet'][href]"));
-        const cssText = (await Promise.all(cssLinks.map(link => fetchTextAsset(link.href)))).join("\n\n");
-        const html = `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>2026人才盘点汇报</title>
-  <style>${buildTalentReportStaticStyle(cssText)}</style>
-</head>
-<body class="static-talent-report">
-  ${clone.outerHTML}
-  ${buildTalentReportStaticScript()}
-</body>
-</html>`;
-        const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-        const link = document.createElement("a");
-        const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-        link.href = URL.createObjectURL(blob);
-        link.download = `2026人才盘点汇报-静态版-${date}.html`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-      } catch (error) {
-        alert(`导出失败：${error.message}`);
-      } finally {
-        if (button) {
-          button.disabled = false;
-          button.textContent = originalText || "导出静态HTML";
-        }
-      }
-    }
-
     function closeGeneratedReport() {
       currentReportId = "";
       currentReportDetail = null;
@@ -3158,12 +3071,6 @@ body.static-talent-report {
     $("reportSearchInputGenerate").addEventListener("input", handleReportSearch);
     $("refreshReportAssetsBtn").addEventListener("click", () => loadReportAssets().catch(error => $("reportGenerateStatus").textContent = `刷新失败：${error.message}`));
     $("refreshReportAssetsInlineBtn").addEventListener("click", () => loadReportAssets().catch(error => $("reportGenerateStatus").textContent = `刷新失败：${error.message}`));
-    document.querySelectorAll("[data-report-slide]").forEach(button => {
-      button.addEventListener("click", () => window.setReportPptSlide?.(button.dataset.reportSlide));
-    });
-    $("exportTalentReportHtmlBtn")?.addEventListener("click", () => {
-      exportTalentReportStaticHtml();
-    });
     $("reportCalibrationDrawerToggle")?.addEventListener("click", () => window.toggleReportCalibrationDrawer?.());
     $("reportDrawerCloseBtn")?.addEventListener("click", () => window.closeReportCalibrationDrawer?.());
     $("reportDrawerTalentPoolSelect")?.addEventListener("change", event => {
