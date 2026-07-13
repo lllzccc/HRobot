@@ -282,7 +282,10 @@ class DataStoreTests(unittest.TestCase):
                 ).encode("utf-8")
 
         store = DataStore(self.data_dir)
-        with patch("server.urlopen", return_value=FakeResponse()):
+        with (
+            patch("server.urlopen", return_value=FakeResponse()),
+            patch("server.app_platform", return_value="windows"),
+        ):
             status = store.update_status()
 
         self.assertTrue(status["updateAvailable"])
@@ -1434,10 +1437,13 @@ class ProductionDataTests(unittest.TestCase):
     def test_runtime_data_uses_current_review_source_folder(self):
         data_dir = Path(__file__).resolve().parents[1] / "data"
         store = DataStore(data_dir)
+        source_path = store._review_source_path()
+        if not source_path.exists():
+            self.skipTest("Production HR data is intentionally not stored in the repository.")
 
         runtime_reviews = store.review_results()
         runtime_people = store.people()
-        current_reviews = json.loads(store._review_source_path().read_text(encoding="utf-8-sig"))
+        current_reviews = json.loads(source_path.read_text(encoding="utf-8-sig"))
         legacy_reviews = json.loads((data_dir / "talent_review_2026.json").read_text(encoding="utf-8-sig"))
 
         self.assertEqual(len(runtime_reviews), len(current_reviews))
