@@ -282,8 +282,10 @@ class DataStoreTests(unittest.TestCase):
                 ).encode("utf-8")
 
         store = DataStore(self.data_dir)
+        trusted_context = object()
         with (
-            patch("server.urlopen", return_value=FakeResponse()),
+            patch("server.urlopen", return_value=FakeResponse()) as mocked_urlopen,
+            patch("server.trusted_https_context", return_value=trusted_context),
             patch("server.app_platform", return_value="windows"),
         ):
             status = store.update_status()
@@ -293,6 +295,7 @@ class DataStoreTests(unittest.TestCase):
         self.assertEqual(status["latest"]["installer"], "hrobot-win-9.9.9.exe")
         self.assertEqual(status["latest"]["notes"], "GitHub release notes")
         self.assertTrue(status["latest"]["canAutoInstall"])
+        self.assertIs(mocked_urlopen.call_args.kwargs["context"], trusted_context)
 
     def test_update_status_selects_matching_macos_dmg_architecture(self):
         class FakeResponse:
@@ -1611,6 +1614,18 @@ class ReportShellTests(unittest.TestCase):
         self.assertIn("/api/intelligence/update", html)
         self.assertIn("/api/intelligence/config", html)
         self.assertIn("hrbp-takeaway", html)
+
+    def test_settings_panels_are_hidden_and_loaded_on_demand(self):
+        html = self._report_shell_source()
+
+        self.assertRegex(
+            html,
+            r"\.settings-tabbed \.settings-section \{[^}]*display:\s*none;",
+        )
+        self.assertIn("function loadSettingsPanel", html)
+        self.assertIn("loadedSettingsPanels.has(key)", html)
+        self.assertIn("selectSettingsPanel(activeSettingsPanel)", html)
+        self.assertIn('{ load: false }', html)
 
 
 if __name__ == "__main__":
