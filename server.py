@@ -14,6 +14,7 @@ import shlex
 import subprocess
 import re
 import shutil
+import ssl
 import sys
 import tempfile
 import threading
@@ -27,6 +28,8 @@ from urllib.parse import parse_qs, quote, urljoin, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
+
+import certifi
 
 from app.modules.agent_center import AgentCenterStoreMixin
 from app.modules.talent_review import TalentReviewStoreMixin
@@ -110,6 +113,10 @@ DEFAULT_APP_VERSION = "0.1.0"
 APP_VERSION_PATH = ROOT / "app_version.json"
 GITHUB_RELEASE_PAGE_URL = "https://github.com/lllzccc/HRobot/releases/latest"
 GITHUB_RELEASE_API_URL = "https://api.github.com/repos/lllzccc/HRobot/releases/latest"
+
+
+def trusted_https_context():
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 def app_platform():
@@ -2190,7 +2197,7 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
                 "User-Agent": "Hrobot-Updater/0.1",
             },
         )
-        with urlopen(request, timeout=20) as response:
+        with urlopen(request, timeout=20, context=trusted_https_context()) as response:
             content_type = response.headers.get("Content-Type", "")
             raw = response.read(1024 * 1024)
         text = raw.decode("utf-8-sig")
@@ -2314,7 +2321,7 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
 
     def _download_update_url(self, url, destination: Path):
         request = Request(url, headers={"User-Agent": "Hrobot-Updater/0.1"})
-        with urlopen(request, timeout=120) as response:
+        with urlopen(request, timeout=120, context=trusted_https_context()) as response:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with open(destination, "wb") as output:
                 shutil.copyfileobj(response, output)

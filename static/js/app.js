@@ -66,6 +66,7 @@
     const droppedUploadFiles = new Map();
     let homeMemoRecords = [];
     let homeAvatarConfig = null;
+    const loadedSettingsPanels = new Set();
     const formatCount = value => new Intl.NumberFormat("zh-CN").format(Number(value) || 0);
     const setHomeCount = (id, value) => {
       const target = $(id);
@@ -547,6 +548,42 @@
       }
     }
 
+    function loadSettingsPanel(target, force = false) {
+      const key = String(target || "data");
+      if (!force && loadedSettingsPanels.has(key)) return Promise.resolve();
+      const loaders = {
+        data: () => loadDataSourceConfig().catch(error => {
+          if ($("dataSourceConfigStatus")) $("dataSourceConfigStatus").textContent = `数据源配置加载失败：${error.message}`;
+        }),
+        model: () => loadAiConfig().catch(error => {
+          if ($("multimodalConfigStatus")) $("multimodalConfigStatus").textContent = `配置加载失败：${error.message}`;
+        }),
+        design: () => loadDesignPromptConfig().catch(error => {
+          if ($("designPromptConfigStatus")) $("designPromptConfigStatus").textContent = `设计配置加载失败：${error.message}`;
+        }),
+        memo: () => Promise.all([
+          loadHomeMemos().catch(error => {
+            if ($("homeMemoStatus")) $("homeMemoStatus").textContent = `备忘加载失败：${error.message}`;
+          }),
+          loadHomeAvatar().catch(error => {
+            if ($("homeAvatarStatus")) $("homeAvatarStatus").textContent = `头像加载失败：${error.message}`;
+          })
+        ]),
+        intelligence: () => loadIntelligenceConfig().catch(error => {
+          if ($("intelligenceConfigStatus")) $("intelligenceConfigStatus").textContent = `情报配置加载失败：${error.message}`;
+        }),
+        update: () => loadAppUpdateStatus().catch(error => {
+          if ($("appUpdateStatus")) $("appUpdateStatus").textContent = `更新配置加载失败：${error.message}`;
+        }),
+        status: () => loadServerStatus().catch(() => {})
+      };
+      const loader = loaders[key];
+      if (!loader) return Promise.resolve();
+      return Promise.resolve(loader()).then(() => {
+        loadedSettingsPanels.add(key);
+      });
+    }
+
     function selectSettingsPanel(target, options = {}) {
       const key = String(target || "data");
       const layout = document.querySelector("[data-settings-tabs]");
@@ -565,6 +602,7 @@
         panel.toggleAttribute("inert", !active);
         panel.setAttribute("aria-hidden", active ? "false" : "true");
       });
+      if (options.load !== false) loadSettingsPanel(activeKey, Boolean(options.forceLoad));
     }
 
     function renderAgentProjectCard(project) {
@@ -739,15 +777,10 @@
       }
       if (String(page) === "8") loadPosterHistory().catch(error => $("designGenerateStatus").textContent = `历史加载失败：${error.message}`);
       if (String(page) === "10") loadAgentProjects().catch(error => $("agentProjectStatus").textContent = `Agent 中心加载失败：${error.message}`);
-      if (String(page) === "9") loadHomeMemos().catch(error => $("homeMemoStatus").textContent = `备忘加载失败：${error.message}`);
-      if (String(page) === "9") loadHomeAvatar().catch(error => $("homeAvatarStatus").textContent = `头像加载失败：${error.message}`);
-      if (String(page) === "9") loadDesignPromptConfig().catch(error => $("designPromptConfigStatus").textContent = `设计配置加载失败：${error.message}`);
-      if (String(page) === "9") loadDataSourceConfig().catch(error => $("dataSourceConfigStatus").textContent = `数据源配置加载失败：${error.message}`);
-      if (String(page) === "9") loadIntelligenceConfig().catch(error => $("intelligenceConfigStatus").textContent = `情报配置加载失败：${error.message}`);
-      if (String(page) === "9") loadServerStatus().catch(() => {});
-      if (String(page) === "9") loadAiConfig().catch(error => {
-        $("multimodalConfigStatus").textContent = `配置加载失败：${error.message}`;
-      });
+      if (String(page) === "9") {
+        const activeSettingsPanel = document.querySelector("[data-settings-target].active")?.dataset.settingsTarget || "data";
+        selectSettingsPanel(activeSettingsPanel);
+      }
       if (String(page) === "3" && typeof window.restoreTalentReviewPage === "function") window.restoreTalentReviewPage();
       if (String(page) === "4") restoreAiConversationState();
     }
@@ -3176,7 +3209,7 @@ body.static-talent-report {
     document.querySelectorAll(".settings-tabbed .settings-section summary").forEach(summary => {
       summary.addEventListener("click", event => event.preventDefault());
     });
-    selectSettingsPanel(document.querySelector("[data-settings-target].active")?.dataset.settingsTarget || "data", { scroll: false });
+    selectSettingsPanel(document.querySelector("[data-settings-target].active")?.dataset.settingsTarget || "data", { load: false });
     $("designPromptConfigForm").addEventListener("submit", saveDesignPromptConfig);
     $("refreshDesignPromptConfigBtn").addEventListener("click", refreshDesignPromptConfig);
     $("agentProjectGrid").addEventListener("click", event => {
@@ -3428,22 +3461,17 @@ body.static-talent-report {
     loadHomeAvatar().catch(error => {
       if ($("homeAvatarStatus")) $("homeAvatarStatus").textContent = `头像加载失败：${error.message}`;
     });
-    loadDesignPromptConfig().catch(error => {
-      $("designPromptConfigStatus").textContent = `设计配置加载失败：${error.message}`;
-    });
-    loadDataSourceConfig().catch(error => {
-      if ($("dataSourceConfigStatus")) $("dataSourceConfigStatus").textContent = `数据源配置加载失败：${error.message}`;
-    });
     loadAgentProjects().catch(error => {
       $("agentProjectStatus").textContent = `Agent 中心加载失败：${error.message}`;
     });
-    loadAppUpdateStatus().catch(error => {
-      if ($("appUpdateStatus")) $("appUpdateStatus").textContent = `更新配置加载失败：${error.message}`;
-    });
+    loadAppUpdateStatus()
+      .then(() => loadedSettingsPanels.add("update"))
+      .catch(error => {
+        if ($("appUpdateStatus")) $("appUpdateStatus").textContent = `更新配置加载失败：${error.message}`;
+      });
     refreshHomeUsageStats();
     initHomeIdentityParticles();
     renderAiQuestionHistory();
-    loadAiConfig().catch(error => appendAiMessage("assistant", `AI 配置加载失败：${error.message}`));
     loadGeneratedReport().catch(() => {});
     loadReportAssets().catch(() => {});
     loadImportSources().catch(() => {});

@@ -40,6 +40,7 @@ python3 -m PyInstaller \
   --windowed \
   --name Hrobot \
   --osx-bundle-identifier com.hrobot.desktop \
+  --collect-data certifi \
   --distpath "$DIST_ROOT" \
   --workpath "$WORK_ROOT" \
   --specpath "$WORK_ROOT" \
