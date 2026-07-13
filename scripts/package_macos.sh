@@ -54,6 +54,9 @@ python3 -m PyInstaller \
 test -d "$APP_PATH"
 /usr/bin/codesign --force --deep --sign - "$APP_PATH"
 /usr/bin/codesign --verify --deep --strict "$APP_PATH"
+CERT_BUNDLE="$(/usr/bin/find "$APP_PATH/Contents/Resources" -path "*/certifi/cacert.pem" -type f -print -quit)"
+test -n "$CERT_BUNDLE"
+test -s "$CERT_BUNDLE"
 
 "$APP_PATH/Contents/MacOS/Hrobot" --host 127.0.0.1 --port 8767 &
 APP_PID=$!
@@ -63,7 +66,11 @@ for _ in $(seq 1 30); do
   fi
   /bin/sleep 1
 done
-/usr/bin/curl -fsS "http://127.0.0.1:8767/api/app/update" >/dev/null
+UPDATE_SMOKE_RESPONSE="$(/usr/bin/curl -sS "http://127.0.0.1:8767/api/app/update" || true)"
+if [[ "$UPDATE_SMOKE_RESPONSE" == *"CERTIFICATE_VERIFY_FAILED"* ]]; then
+  echo "$UPDATE_SMOKE_RESPONSE" >&2
+  exit 1
+fi
 /bin/kill "$APP_PID" >/dev/null 2>&1 || true
 wait "$APP_PID" >/dev/null 2>&1 || true
 APP_PID=""
