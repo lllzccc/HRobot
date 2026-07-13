@@ -291,6 +291,53 @@ class DataStoreTests(unittest.TestCase):
         self.assertEqual(status["latest"]["notes"], "GitHub release notes")
         self.assertTrue(status["latest"]["canAutoInstall"])
 
+    def test_update_status_selects_matching_macos_dmg_architecture(self):
+        class FakeResponse:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, *_args):
+                return json.dumps(
+                    {
+                        "tag_name": "v9.9.9",
+                        "html_url": "https://github.com/lllzccc/HRobot/releases/tag/v9.9.9",
+                        "body": "macOS release notes",
+                        "published_at": "2026-07-13T10:00:00Z",
+                        "assets": [
+                            {
+                                "name": "hrobot-mac-x64-9.9.9.dmg",
+                                "browser_download_url": "https://example.com/hrobot-mac-x64-9.9.9.dmg",
+                            },
+                            {
+                                "name": "hrobot-mac-arm64-9.9.9.dmg",
+                                "browser_download_url": "https://example.com/hrobot-mac-arm64-9.9.9.dmg",
+                            },
+                            {
+                                "name": "hrobot-win-9.9.9.exe",
+                                "browser_download_url": "https://example.com/hrobot-win-9.9.9.exe",
+                            },
+                        ],
+                    }
+                ).encode("utf-8")
+
+        store = DataStore(self.data_dir)
+        with (
+            patch("server.urlopen", return_value=FakeResponse()),
+            patch("server.app_platform", return_value="mac"),
+            patch("server.app_architecture", return_value="arm64"),
+            patch("server.sys.frozen", True, create=True),
+        ):
+            status = store.update_status()
+
+        self.assertEqual(status["latest"]["installer"], "hrobot-mac-arm64-9.9.9.dmg")
+        self.assertTrue(status["latest"]["canAutoInstall"])
+        self.assertEqual(status["packages"]["mac-arm64"]["name"], "hrobot-mac-arm64-9.9.9.dmg")
+
     def test_update_status_rejects_html_share_page_url(self):
         class FakeHtmlResponse:
             headers = {"Content-Type": "text/html"}
@@ -743,17 +790,63 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
         self.assertTrue(report["content"].lstrip().lower().startswith("<!doctype html>"))
         self.assertNotIn("```", report["content"])
 
-    def test_report_context_prioritizes_preset_setting_file(self):
+    def test_report_settings_are_exposed_as_builtin_abilities(self):
         setting_dir = self.data_dir / "report_generation" / "settings"
         setting_dir.mkdir(parents=True, exist_ok=True)
         (setting_dir / "360报告设定说明.md").write_text("卡片标题必须为 xxx360报告解读", encoding="utf-8")
         store = DataStore(self.data_dir)
 
-        context = store.report_asset_context("360")
+        abilities = store.report_abilities()["abilities"]
+        ability = next(item for item in abilities if item.get("presetId") == "360")
 
-        self.assertEqual(context[0]["type"], "报告设定说明")
-        self.assertEqual(context[0]["filename"], "360报告设定说明.md")
-        self.assertEqual(context[0]["priority"], "highest")
+        self.assertEqual(ability["sourceType"], "builtin")
+        self.assertEqual(ability["settingFile"], "360报告设定说明.md")
+        self.assertIn("卡片标题必须为 xxx360报告解读", ability["descriptionMd"])
+
+        context = store.report_asset_context("360", selected_abilities=[ability["id"]])
+        self.assertNotIn("报告设定说明", [item["type"] for item in context])
+        ability_context = next(item for item in context if item["type"] == "能力中心")
+        self.assertIn("卡片标题必须为 xxx360报告解读", ability_context["content"])
+
+    def test_empty_selected_abilities_do_not_include_all_abilities(self):
+        store = DataStore(self.data_dir)
+
+        context = store.report_asset_context("talent-review", selected_abilities=[])
+
+        self.assertNotIn("能力中心", [item["type"] for item in context])
+
+    def test_saving_builtin_ability_returns_full_ability_list(self):
+        store = DataStore(self.data_dir)
+
+        payload = store.save_report_ability(
+            "360报告能力",
+            description_md="# 自定义 360 能力说明",
+            ability_id="report-preset-ability-360",
+        )
+
+        self.assertEqual(len(payload["abilities"]), 3)
+        self.assertEqual(payload["ability"]["id"], "report-preset-ability-360")
+        self.assertIn("自定义 360", payload["ability"]["descriptionMd"])
+        self.assertIn("report-preset-ability-org-diagnosis", [item["id"] for item in payload["abilities"]])
+        self.assertIn("report-preset-ability-talent-review", [item["id"] for item in payload["abilities"]])
+
+    def test_report_abilities_can_exceed_five_items(self):
+        store = DataStore(self.data_dir)
+
+        payload = {}
+        for index in range(1, 7):
+            payload = store.save_report_ability(
+                f"自定义能力 {index}",
+                description_md=f"第 {index} 个自定义能力说明",
+            )
+
+        custom_abilities = [
+            item for item in payload["abilities"]
+            if item.get("sourceType") == "custom"
+        ]
+        self.assertEqual(len(custom_abilities), 6)
+        self.assertEqual(len(payload["abilities"]), 9)
+        self.assertIn("自定义能力 6", [item["name"] for item in custom_abilities])
 
     def test_360_report_context_rejects_unreadable_pdf_material(self):
         store = DataStore(self.data_dir)
@@ -821,7 +914,7 @@ ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler).serve_fore
                 "materials": ["selected-material.md"],
             },
         )
-        asset_message = next(message["content"] for message in messages if message["content"].startswith("导入的 skill 和分析材料："))
+        asset_message = next(message["content"] for message in messages if message["content"].startswith("能力中心、导入 skill 和分析材料："))
 
         self.assertIn("selected-skill.md", asset_message)
         self.assertIn("selected-material.md", asset_message)
@@ -1400,7 +1493,8 @@ class ReportShellTests(unittest.TestCase):
         self.assertIn('id="posterPreviewDialog"', html)
         self.assertIn("openPosterPreview", html)
         self.assertIn("data-poster-preview", html)
-        self.assertIn('id="skillImportForm"', html)
+        self.assertIn('id="abilityCenter"', html)
+        self.assertIn('id="reportAbilityForm"', html)
         self.assertIn('id="materialImportForm"', html)
         self.assertIn('id="reportGenerateForm"', html)
         self.assertIn('id="reviewImportForm"', html)
@@ -1434,7 +1528,8 @@ class ReportShellTests(unittest.TestCase):
         self.assertNotIn("profileSnapshots", html)
         self.assertIn('id="refreshReportAssetsBtn"', html)
         self.assertIn('id="refreshReportAssetsInlineBtn"', html)
-        self.assertIn('id="reportSkillAssetList"', html)
+        self.assertIn('id="reportAbilityList"', html)
+        self.assertIn("/api/report/ability", html)
         self.assertIn('id="reportMaterialAssetList"', html)
         self.assertNotIn('id="aiConfigForm"', html)
         self.assertIn("AI问答", html)

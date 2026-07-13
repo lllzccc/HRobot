@@ -1,0 +1,6 @@
+interface:
+  display_name: "Project Retro"
+  short_description: "On-demand project retrospectives with actionable improvements."
+  default_prompt: "Use $project-retro to review this session and propose concrete project workflow improvements."
+policy:
+  allow_implicit_invocation: false

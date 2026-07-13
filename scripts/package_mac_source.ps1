@@ -54,6 +54,25 @@ function Copy-Tree {
   }
 }
 
+function Copy-PublicAssets {
+  param([string]$Destination)
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  Copy-Tree (Join-Path $Root "assets\fonts") (Join-Path $Destination "fonts")
+  Copy-Tree (Join-Path $Root "assets\avatars") (Join-Path $Destination "avatars")
+  $trimmed = Join-Path $Destination "avatars\_trimmed"
+  if (Test-Path -LiteralPath $trimmed) {
+    Remove-Item -LiteralPath $trimmed -Recurse -Force
+  }
+  $brandTarget = Join-Path $Destination "brand"
+  New-Item -ItemType Directory -Force -Path $brandTarget | Out-Null
+  foreach ($name in @("hrobot-buddy-avatar.svg", "hrobot-logo-dark.png", "hrobot-report-watermark.png")) {
+    $source = Join-Path $Root "assets\brand\$name"
+    if (Test-Path -LiteralPath $source) {
+      Copy-Item -LiteralPath $source -Destination (Join-Path $brandTarget $name) -Force
+    }
+  }
+}
+
 function Remove-CacheFiles {
   param([string]$Path)
   if (-not (Test-Path -LiteralPath $Path)) { return }
@@ -123,9 +142,10 @@ if ($readmeSource) {
   Copy-Item -LiteralPath $readmeSource.FullName -Destination (Join-Path $StageRoot $readmeSource.Name) -Force
 }
 
-foreach ($dir in @("app", "assets", "docs", "scripts", "static", "tests")) {
+foreach ($dir in @("app", "docs", "scripts", "static", "tests")) {
   Copy-Tree (Join-Path $Root $dir) (Join-Path $StageRoot $dir)
 }
+Copy-PublicAssets (Join-Path $StageRoot "assets")
 Remove-CacheFiles $StageRoot
 
 $DataTarget = Join-Path $StageRoot "data"
