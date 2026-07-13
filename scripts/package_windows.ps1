@@ -4,7 +4,8 @@ param(
   [int]$Port = 8767,
   [string]$AppName = "Hrobot",
   [string]$DisplayName = "Hrobot",
-  [string]$Version = "0.1.0"
+  [string]$Version = "0.1.0",
+  [switch]$EnableWatchdog
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +65,25 @@ function Copy-Tree {
   if (Test-Path $Source) {
     New-Item -ItemType Directory -Force -Path (Split-Path $Destination -Parent) | Out-Null
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
+  }
+}
+
+function Copy-PublicAssets {
+  param([string]$Destination)
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  Copy-Tree (Join-Path $Root "assets\fonts") (Join-Path $Destination "fonts")
+  Copy-Tree (Join-Path $Root "assets\avatars") (Join-Path $Destination "avatars")
+  $trimmed = Join-Path $Destination "avatars\_trimmed"
+  if (Test-Path -LiteralPath $trimmed) {
+    Remove-Item -LiteralPath $trimmed -Recurse -Force
+  }
+  $brandTarget = Join-Path $Destination "brand"
+  New-Item -ItemType Directory -Force -Path $brandTarget | Out-Null
+  foreach ($name in @("hrobot-buddy-avatar.svg", "hrobot-logo-dark.png", "hrobot-report-watermark.png")) {
+    $source = Join-Path $Root "assets\brand\$name"
+    if (Test-Path -LiteralPath $source) {
+      Copy-Item -LiteralPath $source -Destination (Join-Path $brandTarget $name) -Force
+    }
   }
 }
 
@@ -143,7 +163,7 @@ Copy-Item -LiteralPath (Join-Path $Root "index.html") -Destination (Join-Path $A
   name = $DisplayName
   version = $Version
 } | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $AppPackageDir "app_version.json") -Encoding UTF8
-Copy-Tree (Join-Path $Root "assets") (Join-Path $AppPackageDir "assets")
+Copy-PublicAssets (Join-Path $AppPackageDir "assets")
 Copy-Tree (Join-Path $Root "app") (Join-Path $AppPackageDir "app")
 Copy-Tree (Join-Path $Root "static") (Join-Path $AppPackageDir "static")
 Copy-Tree (Join-Path $Root "scripts") (Join-Path $AppPackageDir "scripts")
@@ -159,6 +179,8 @@ if (-not $IncludeHrData) {
     "talent_profile_snapshots",
     "hrbp_profile_splits",
     "report_generation",
+    "report_generation\abilities",
+    "report_generation\abilities\files",
     "report_generation\skills",
     "report_generation\materials",
     "report_generation\settings",
@@ -230,12 +252,21 @@ chcp 65001 >nul
 setlocal
 set "APP_EXE=%~dp0$AppName.exe"
 schtasks /Create /F /TN "$TaskName" /SC ONLOGON /TR "\"%APP_EXE%\" --host 0.0.0.0 --port $Port"
-schtasks /Create /F /TN "$WatchdogTaskName" /SC MINUTE /MO 5 /TR "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0Ensure-HRobot.ps1\""
 echo Registered startup task: $TaskName
-echo Registered watchdog task: $WatchdogTaskName
+echo Watchdog is optional. Run Register-Watchdog.bat only if this machine must keep HRobot alive unattended.
 pause
 "@
 $RegisterBat | Set-Content -Path (Join-Path $AppPackageDir "Register-Autostart.bat") -Encoding ASCII
+
+$RegisterWatchdogBat = @"
+@echo off
+chcp 65001 >nul
+schtasks /Create /F /TN "$WatchdogTaskName" /SC MINUTE /MO 5 /TR "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%~dp0Ensure-HRobot.ps1\""
+echo Registered watchdog task: $WatchdogTaskName
+echo The watchdog checks every 5 minutes and restarts HRobot only when its packaged exe is not listening on port $Port.
+pause
+"@
+$RegisterWatchdogBat | Set-Content -Path (Join-Path $AppPackageDir "Register-Watchdog.bat") -Encoding ASCII
 
 $StopBat = @"
 @echo off
@@ -250,12 +281,21 @@ $UnregisterBat = @"
 @echo off
 chcp 65001 >nul
 schtasks /Delete /F /TN "$TaskName"
-schtasks /Delete /F /TN "$WatchdogTaskName"
+schtasks /Delete /F /TN "$WatchdogTaskName" >nul 2>nul
 echo Removed startup task: $TaskName
-echo Removed watchdog task: $WatchdogTaskName
+echo Removed watchdog task if it existed: $WatchdogTaskName
 pause
 "@
 $UnregisterBat | Set-Content -Path (Join-Path $AppPackageDir "Unregister-Autostart.bat") -Encoding ASCII
+
+$UnregisterWatchdogBat = @"
+@echo off
+chcp 65001 >nul
+schtasks /Delete /F /TN "$WatchdogTaskName"
+echo Removed watchdog task: $WatchdogTaskName
+pause
+"@
+$UnregisterWatchdogBat | Set-Content -Path (Join-Path $AppPackageDir "Unregister-Watchdog.bat") -Encoding ASCII
 
 Assert-RequiredPackageFiles $AppPackageDir
 
@@ -281,6 +321,7 @@ APP_NAME = "$AppName"
 DISPLAY_NAME = "$DisplayName"
 TASK_NAME = "$TaskName"
 WATCHDOG_TASK_NAME = "$WatchdogTaskName"
+ENABLE_WATCHDOG = $($EnableWatchdog.IsPresent.ToString())
 PORT = "$Port"
 OPEN_URL = "http://127.0.0.1:$Port/index.html"
 
@@ -328,8 +369,9 @@ def merge_extract(zip_path: pathlib.Path, target: pathlib.Path) -> None:
 def register_task(exe: pathlib.Path) -> None:
     task_run = f'"{exe}" --host 0.0.0.0 --port {PORT}'
     subprocess.run(["schtasks", "/Create", "/F", "/TN", TASK_NAME, "/SC", "ONLOGON", "/TR", task_run], check=False)
-    watchdog = f'powershell -NoProfile -ExecutionPolicy Bypass -File "{exe.parent / "Ensure-HRobot.ps1"}"'
-    subprocess.run(["schtasks", "/Create", "/F", "/TN", WATCHDOG_TASK_NAME, "/SC", "MINUTE", "/MO", "5", "/TR", watchdog], check=False)
+    if ENABLE_WATCHDOG:
+        watchdog = f'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{exe.parent / "Ensure-HRobot.ps1"}"'
+        subprocess.run(["schtasks", "/Create", "/F", "/TN", WATCHDOG_TASK_NAME, "/SC", "MINUTE", "/MO", "5", "/TR", watchdog], check=False)
 
 
 def start_app(exe: pathlib.Path) -> None:
@@ -355,7 +397,10 @@ def main() -> int:
     print("Install complete.")
     print(f"Local URL: {OPEN_URL}")
     print("A startup task has been registered for the current Windows user.")
-    print("A watchdog task checks every 5 minutes and restarts the app if it is not listening.")
+    if ENABLE_WATCHDOG:
+        print("A hidden watchdog task checks every 5 minutes and restarts the app if it is not listening.")
+    else:
+        print("Watchdog is not registered by default. Run Register-Watchdog.bat only for unattended keep-alive.")
     print("If this computer is shut down, the local service will be offline until Windows starts again.")
     input("Press Enter to exit...")
     return 0

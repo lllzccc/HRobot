@@ -9,6 +9,8 @@ import importlib.util
 import io
 import json
 import os
+import platform
+import shlex
 import subprocess
 import re
 import shutil
@@ -17,6 +19,7 @@ import tempfile
 import threading
 import time
 import uuid
+import webbrowser
 from datetime import datetime, timezone, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,15 +40,41 @@ if getattr(sys, "frozen", False):
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 
+def packaged_resource_root():
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return Path(__file__).resolve().parent
+
+
 def app_root():
+    if getattr(sys, "frozen", False) and sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Hrobot"
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
 
 
+PACKAGED_RESOURCE_ROOT = packaged_resource_root()
 ROOT = app_root()
 DATA_DIR = ROOT / "data"
 DEBUG_LOG_PATH = ROOT / "server-debug.log"
+
+
+def sync_packaged_macos_runtime():
+    if not (getattr(sys, "frozen", False) and sys.platform == "darwin"):
+        return
+    ROOT.mkdir(parents=True, exist_ok=True)
+    for filename in ("index.html", "app_version.json"):
+        source = PACKAGED_RESOURCE_ROOT / filename
+        if source.exists():
+            shutil.copy2(source, ROOT / filename)
+    for dirname in ("static", "assets", "scripts"):
+        source = PACKAGED_RESOURCE_ROOT / dirname
+        if source.exists():
+            shutil.copytree(source, ROOT / dirname, dirs_exist_ok=True)
+
+
+sync_packaged_macos_runtime()
 
 
 def talent_snapshot_root(data_dir: Path):
@@ -89,6 +118,15 @@ def app_platform():
     if os.name == "nt":
         return "windows"
     return "linux"
+
+
+def app_architecture():
+    machine = platform.machine().lower()
+    if machine in {"arm64", "aarch64"}:
+        return "arm64"
+    if machine in {"x86_64", "amd64"}:
+        return "x64"
+    return machine or "unknown"
 
 
 def app_version_payload():
@@ -163,10 +201,24 @@ REPORT_PRESETS = {
     },
 }
 
+REPORT_PRESET_ABILITY_ID_PREFIX = "report-preset-ability-"
+
+
+def report_preset_ability_id(preset_id):
+    return f"{REPORT_PRESET_ABILITY_ID_PREFIX}{preset_id}"
+
 DEFAULT_HOME_MEMO = {
     "updatedAt": "",
     "records": [],
 }
+
+DEFAULT_HOME_AVATAR_CONFIG = {
+    "updatedAt": "",
+    "selectedSrc": "assets/brand/hrobot-buddy-avatar.svg",
+}
+
+HOME_AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+HOME_AVATAR_TRIMMABLE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 DEFAULT_DESIGN_PROMPT_CONFIG = {
     "basePrompt": "为 HRobot HRBP 工作台生成一张可直接使用的本地海报图片。",
@@ -301,8 +353,14 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
         self._agent_processes = {}
         self._agent_process_lock = threading.RLock()
         self.home_memo_path = self.data_dir / "home_memo.json"
+        self.home_avatar_config_path = self.data_dir / "home_avatar_config.json"
+        self.home_avatar_dir = ROOT / "assets" / "avatars"
+        self.home_avatar_trim_dir = self.home_avatar_dir / "_trimmed"
         self.report_skill_dir = self.report_dir / "skills"
         self.report_material_dir = self.report_dir / "materials"
+        self.report_ability_dir = self.report_dir / "abilities"
+        self.report_ability_file_dir = self.report_ability_dir / "files"
+        self.report_ability_manifest_path = self.report_ability_dir / "manifest.json"
         self.report_setting_dir = self.report_dir / "settings"
         self.report_markdown_dir = self.report_dir / "reports_md"
         self.report_html_dir = self.report_dir / "reports_html"
@@ -675,6 +733,240 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
         target.write_bytes(content)
         return {"filename": target.name, "path": str(target), "size": target.stat().st_size}
 
+    def _report_ability_manifest(self):
+        payload = self._read_json(self.report_ability_manifest_path, {"abilities": [], "updatedAt": ""})
+        if not isinstance(payload, dict):
+            payload = {"abilities": [], "updatedAt": ""}
+        abilities = payload.get("abilities", [])
+        if not isinstance(abilities, list):
+            abilities = []
+        payload["abilities"] = [item for item in abilities if isinstance(item, dict)]
+        return payload
+
+    def _save_report_ability_manifest(self, abilities):
+        self.report_ability_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "abilities": abilities,
+            "updatedAt": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+        }
+        self.report_ability_manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._clear_cache()
+        return payload
+
+    def _report_preset_setting_path(self, preset):
+        setting_file = preset.get("settingFile", "")
+        if not setting_file:
+            return Path("")
+        setting_paths = [
+            self.report_setting_dir / setting_file,
+            *[folder / "设定说明" / setting_file for folder in self.legacy_report_dirs],
+        ]
+        return self._first_existing_path(setting_paths)
+
+    def _report_preset_abilities(self, payload=None):
+        payload = payload or self._report_ability_manifest()
+        overrides = {item.get("id"): item for item in payload.get("abilities", []) if item.get("id")}
+        abilities = []
+        for preset_id, preset in REPORT_PRESETS.items():
+            ability_id = report_preset_ability_id(preset_id)
+            override = overrides.get(ability_id, {})
+            setting_path = self._report_preset_setting_path(preset)
+            default_description = self._read_text_file(setting_path) if setting_path.exists() else preset.get("prompt", "")
+            description_md = override.get("descriptionMd") if override else default_description
+            updated_at = override.get("updatedAt", "")
+            if not updated_at and setting_path.exists():
+                updated_at = datetime.fromtimestamp(setting_path.stat().st_mtime, LOCAL_TZ).isoformat(timespec="seconds")
+            abilities.append({
+                "id": ability_id,
+                "name": override.get("name") or f"{preset['name']}能力",
+                "descriptionMd": description_md,
+                "summary": self._report_ability_summary(description_md),
+                "zipFilename": override.get("zipFilename", ""),
+                "zipAsset": override.get("zipAsset", ""),
+                "zipSize": int(override.get("zipSize", 0) or 0),
+                "zipFileCount": int(override.get("zipFileCount", 0) or 0),
+                "createdAt": override.get("createdAt") or updated_at or datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+                "updatedAt": updated_at or datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+                "sourceType": "builtin",
+                "presetId": preset_id,
+                "settingFile": preset.get("settingFile", ""),
+            })
+        return abilities
+
+    def report_abilities(self):
+        payload = self._report_ability_manifest()
+        builtin_abilities = self._report_preset_abilities(payload)
+        builtin_ids = {item["id"] for item in builtin_abilities}
+        custom_abilities = [
+            item for item in payload.get("abilities", [])
+            if item.get("id") not in builtin_ids
+        ]
+        return {
+            **payload,
+            "abilities": [
+                *builtin_abilities,
+                *sorted(custom_abilities, key=lambda item: item.get("updatedAt", ""), reverse=True),
+            ],
+        }
+
+    @staticmethod
+    def _report_ability_summary(markdown):
+        text = re.sub(r"[*_`>#|\\-]+", "", str(markdown or ""))
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:120]
+
+    def _validate_report_ability_zip(self, content):
+        if not content:
+            return []
+        try:
+            with ZipFile(io.BytesIO(content)) as archive:
+                names = [name for name in archive.namelist() if name and not name.endswith("/")]
+        except Exception as error:
+            raise ValueError(f"能力 ZIP 无法读取：{error}")
+        if not names:
+            raise ValueError("能力 ZIP 为空。")
+        return names
+
+    def save_report_ability(self, name, description_md="", zip_filename="", zip_content=None, ability_id=""):
+        title = str(name or "").strip()[:80]
+        if not title:
+            raise ValueError("请填写能力名称。")
+        description_md = str(description_md or "").strip()
+        ability_id = str(ability_id or "").strip()
+        payload = self._report_ability_manifest()
+        abilities = payload.get("abilities", [])
+        builtin_existing = next((item for item in self._report_preset_abilities(payload) if item.get("id") == ability_id), None) if ability_id else None
+        existing = next((item for item in abilities if item.get("id") == ability_id), None) if ability_id else None
+        existing = existing or builtin_existing
+        if not ability_id:
+            slug = re.sub(r"[^a-zA-Z0-9]+", "-", title).strip("-").lower()[:32] or "ability"
+            ability_id = f"{slug}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        self.report_ability_file_dir.mkdir(parents=True, exist_ok=True)
+        zip_asset = existing.get("zipAsset", "") if existing else ""
+        zip_original_name = existing.get("zipFilename", "") if existing else ""
+        zip_size = int(existing.get("zipSize", 0) or 0) if existing else 0
+        zip_file_count = int(existing.get("zipFileCount", 0) or 0) if existing else 0
+        if zip_content:
+            names = self._validate_report_ability_zip(zip_content)
+            safe_zip_name = self._safe_upload_name(zip_filename or f"{ability_id}.zip", f"{ability_id}.zip")
+            if not safe_zip_name.lower().endswith(".zip"):
+                safe_zip_name = f"{Path(safe_zip_name).stem}.zip"
+            zip_asset = f"{ability_id}-{safe_zip_name}"
+            target = self.report_ability_file_dir / zip_asset
+            target.write_bytes(zip_content)
+            zip_original_name = Path(zip_filename or safe_zip_name).name
+            zip_size = target.stat().st_size
+            zip_file_count = len(names)
+            if existing and existing.get("zipAsset") and existing.get("zipAsset") != zip_asset:
+                old_path = self.report_ability_file_dir / Path(existing.get("zipAsset", "")).name
+                if old_path.exists():
+                    old_path.unlink()
+        ability = {
+            "id": ability_id,
+            "name": title,
+            "descriptionMd": description_md,
+            "summary": self._report_ability_summary(description_md),
+            "zipFilename": zip_original_name,
+            "zipAsset": zip_asset,
+            "zipSize": zip_size,
+            "zipFileCount": zip_file_count,
+            "createdAt": existing.get("createdAt") if existing else datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+            "updatedAt": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+            "sourceType": "builtin" if builtin_existing or (existing and existing.get("sourceType") == "builtin") else "custom",
+        }
+        if ability["sourceType"] == "builtin":
+            ability["presetId"] = (builtin_existing or existing).get("presetId", "")
+            ability["settingFile"] = (builtin_existing or existing).get("settingFile", "")
+        abilities = [ability, *[item for item in abilities if item.get("id") != ability_id]]
+        self._save_report_ability_manifest(abilities)
+        refreshed = self.report_abilities()
+        refreshed["ability"] = next(
+            (item for item in refreshed.get("abilities", []) if item.get("id") == ability_id),
+            ability,
+        )
+        return refreshed
+
+    def delete_report_ability(self, ability_id):
+        ability_id = str(ability_id or "").strip()
+        if not ability_id:
+            raise ValueError("能力 ID 不能为空。")
+        if ability_id in {report_preset_ability_id(preset_id) for preset_id in REPORT_PRESETS}:
+            raise ValueError("内置报告能力不能删除，可以编辑说明。")
+        payload = self._report_ability_manifest()
+        abilities = payload.get("abilities", [])
+        target = next((item for item in abilities if item.get("id") == ability_id), None)
+        if not target:
+            raise FileNotFoundError("未找到要删除的能力。")
+        zip_asset = Path(target.get("zipAsset", "")).name
+        if zip_asset:
+            zip_path = self.report_ability_file_dir / zip_asset
+            if zip_path.exists():
+                zip_path.unlink()
+        self._save_report_ability_manifest([item for item in abilities if item.get("id") != ability_id])
+        return self.report_abilities()
+
+    def _read_report_ability_zip_context(self, ability):
+        zip_asset = Path(str(ability.get("zipAsset") or "")).name
+        if not zip_asset:
+            return ""
+        zip_path = self.report_ability_file_dir / zip_asset
+        if not zip_path.exists():
+            return ""
+        chunks = []
+        total = 0
+        text_suffixes = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".js", ".ts", ".html", ".css"}
+        with ZipFile(zip_path) as archive:
+            for info in archive.infolist():
+                if info.is_dir() or len(chunks) >= 40:
+                    continue
+                suffix = Path(info.filename).suffix.lower()
+                if suffix not in text_suffixes:
+                    continue
+                if info.file_size > 300000:
+                    continue
+                raw = archive.read(info)
+                text = raw.decode("utf-8-sig", errors="replace").strip()
+                if not text:
+                    continue
+                excerpt = text[:12000]
+                chunks.append(f"### ZIP 文件：{info.filename}\n{excerpt}")
+                total += len(excerpt)
+                if total > 60000:
+                    break
+        return "\n\n".join(chunks)
+
+    def report_ability_context(self, selected_abilities=None):
+        if selected_abilities is None:
+            return []
+        requested_ids = [str(item or "").strip() for item in (selected_abilities or []) if str(item or "").strip()]
+        if not requested_ids:
+            return []
+        if any(Path(item).name != item for item in requested_ids):
+            raise ValueError("所选能力 ID 不合法。")
+        abilities = self.report_abilities().get("abilities", [])
+        if requested_ids:
+            ability_by_id = {item.get("id"): item for item in abilities}
+            missing = [item for item in requested_ids if item not in ability_by_id]
+            if missing:
+                raise FileNotFoundError(f"未找到所选能力：{'、'.join(missing)}")
+            abilities = [ability_by_id[item] for item in requested_ids]
+        sections = []
+        for ability in abilities:
+            content = [
+                f"能力名称：{ability.get('name', '')}",
+                f"能力说明 Markdown：\n{ability.get('descriptionMd', '') or '无'}",
+            ]
+            zip_context = self._read_report_ability_zip_context(ability)
+            if zip_context:
+                content.append(f"能力 ZIP 内容摘录：\n{zip_context}")
+            sections.append({
+                "type": "能力中心",
+                "filename": ability.get("zipFilename") or ability.get("name", ""),
+                "abilityId": ability.get("id", ""),
+                "content": "\n\n".join(content),
+            })
+        return sections
+
     def _delete_named_file(self, folders, filename, exclude_names=None):
         safe_name = Path(filename or "").name
         if not safe_name or safe_name != filename:
@@ -715,6 +1007,7 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
                 for path in sorted(set(files), key=lambda item: item.stat().st_mtime, reverse=True)
             ]
         return {
+            "abilities": self.report_abilities().get("abilities", []),
             "skills": list_files([self.report_skill_dir, *[folder / "skills" for folder in self.legacy_report_dirs]]),
             "materials": list_files([self.report_material_dir, *[folder / "materials" for folder in self.legacy_report_dirs]]),
         }
@@ -754,27 +1047,17 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
             "employeeRoster": list_files(self.data_dir, ["employee_manager_map.json"]),
         }
 
-    def report_asset_context(self, preset_id=None, target_name="", selected_skills=None, selected_materials=None):
+    def report_asset_context(self, preset_id=None, target_name="", selected_skills=None, selected_materials=None, selected_abilities=None):
         sections = []
         preset = REPORT_PRESETS.get(preset_id or "")
         if preset:
-            setting_paths = [
-                self.report_setting_dir / preset.get("settingFile", ""),
-                *[folder / "设定说明" / preset.get("settingFile", "") for folder in self.legacy_report_dirs],
-            ]
-            setting_path = self._first_existing_path(setting_paths)
-            if setting_path.exists():
-                sections.append({
-                    "type": "报告设定说明",
-                    "filename": setting_path.name,
-                    "priority": "highest",
-                    "content": self._read_text_file(setting_path),
-                })
             sections.append({
                 "type": "报告预设",
                 "filename": preset["name"],
                 "content": preset["prompt"],
             })
+        if selected_abilities is not None:
+            sections.extend(self.report_ability_context(selected_abilities))
         asset_groups = [
             ("skill框架与分析逻辑", [self.report_skill_dir, *[folder / "skills" for folder in self.legacy_report_dirs]], True, selected_skills),
             ("其他分析材料", [self.report_material_dir, *[folder / "materials" for folder in self.legacy_report_dirs]], False, selected_materials),
@@ -1951,6 +2234,16 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
             return "mac"
         return ""
 
+    def _asset_architecture(self, asset_name):
+        name = str(asset_name or "").lower()
+        if "universal" in name:
+            return "universal"
+        if "arm64" in name or "aarch64" in name or "apple-silicon" in name:
+            return "arm64"
+        if "x64" in name or "x86_64" in name or "intel" in name:
+            return "x64"
+        return ""
+
     def _asset_score_for_platform(self, asset, platform):
         name = str(asset.get("name") or "")
         lower = name.lower()
@@ -1959,8 +2252,18 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
             score += 100
         if platform == "windows" and lower.endswith(".exe"):
             score += 40
-        if platform == "mac" and lower.endswith(".zip"):
-            score += 30
+        if platform == "mac":
+            if lower.endswith(".dmg"):
+                score += 50
+            elif lower.endswith(".zip"):
+                score += 20
+            architecture = self._asset_architecture(name)
+            if architecture == "universal":
+                score += 40
+            elif architecture == app_architecture():
+                score += 35
+            elif architecture:
+                score -= 80
         if "source code" in lower:
             score -= 100
         if lower.startswith("hrobot"):
@@ -1986,7 +2289,9 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
                 continue
             asset_platform = self._asset_platform(asset.get("name"))
             if asset_platform:
-                package_map[asset_platform] = {
+                architecture = self._asset_architecture(asset.get("name"))
+                package_key = f"{asset_platform}-{architecture}" if architecture else asset_platform
+                package_map[package_key] = {
                     "name": str(asset.get("name") or ""),
                     "url": str(asset.get("browser_download_url") or ""),
                 }
@@ -2077,7 +2382,14 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
                 "publishedAt": str(release.get("publishedAt") or ""),
                 "releasePage": str(release.get("releasePage") or GITHUB_RELEASE_PAGE_URL),
                 "platform": app_platform(),
-                "canAutoInstall": app_platform() == "windows" and installer_suffix == ".exe",
+                "canAutoInstall": (
+                    (app_platform() == "windows" and installer_suffix == ".exe")
+                    or (
+                        app_platform() == "mac"
+                        and installer_suffix == ".dmg"
+                        and getattr(sys, "frozen", False)
+                    )
+                ),
             },
             "manifestPath": str(manifest_ref),
             "sourcePath": str(release.get("releasePage") or GITHUB_RELEASE_PAGE_URL) if release.get("sourceKind") == "github" else manifest_parent,
@@ -2133,6 +2445,56 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
             self._download_update_url(latest.get("installerPath") or "", local_installer)
         else:
             shutil.copy2(installer_path, local_installer)
+        if app_platform() == "mac":
+            executable = Path(sys.executable).resolve()
+            app_bundle = next((parent for parent in executable.parents if parent.suffix == ".app"), None)
+            if not app_bundle:
+                raise ValueError("当前程序不是 macOS 应用包，无法执行覆盖更新。")
+            updater_path = temp_dir / "install-hrobot-macos-update.sh"
+            log_path = temp_dir / "macos-update.log"
+            script = f"""#!/bin/bash
+set -euo pipefail
+exec >> {shlex.quote(str(log_path))} 2>&1
+DMG={shlex.quote(str(local_installer))}
+APP={shlex.quote(str(app_bundle))}
+PID={os.getpid()}
+MOUNT_DIR=\"$(mktemp -d /tmp/hrobot-update.XXXXXX)\"
+cleanup() {{
+  /usr/bin/hdiutil detach \"$MOUNT_DIR\" -quiet >/dev/null 2>&1 || true
+  /bin/rmdir \"$MOUNT_DIR\" >/dev/null 2>&1 || true
+}}
+trap cleanup EXIT
+/bin/sleep 2
+/usr/bin/hdiutil attach \"$DMG\" -nobrowse -readonly -mountpoint \"$MOUNT_DIR\"
+SOURCE_APP=\"$MOUNT_DIR/Hrobot.app\"
+test -d \"$SOURCE_APP\"
+NEW_APP=\"${{APP}}.new\"
+/bin/rm -rf \"$NEW_APP\"
+/usr/bin/ditto \"$SOURCE_APP\" \"$NEW_APP\"
+/bin/rm -rf \"$APP\"
+/bin/mv \"$NEW_APP\" \"$APP\"
+cleanup
+trap - EXIT
+/bin/kill \"$PID\" >/dev/null 2>&1 || true
+/bin/sleep 1
+/usr/bin/open \"$APP\"
+"""
+            updater_path.write_text(script, encoding="utf-8")
+            updater_path.chmod(0o700)
+            subprocess.Popen(
+                ["/bin/bash", str(updater_path)],
+                cwd=str(temp_dir),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return {
+                **status,
+                "started": True,
+                "localInstaller": str(local_installer),
+                "message": "macOS 更新包已下载，Hrobot 将完成覆盖安装并重新打开。",
+            }
         kwargs = {
             "cwd": str(local_installer.parent),
             "stdin": subprocess.DEVNULL,
@@ -2520,6 +2882,123 @@ class DataStore(AgentCenterStoreMixin, TalentReviewStoreMixin):
         records = [item for item in self.home_memos()["records"] if item.get("date") != date]
         return self.save_home_memos(records)
 
+    def _home_avatar_entry(self, src, name=None, builtin=False):
+        src = str(src or "").strip().replace("\\", "/")
+        if not src:
+            return None
+        label = name or Path(src).stem.replace("-", " ").replace("_", " ").strip() or "Avatar"
+        return {
+            "id": src,
+            "name": label,
+            "src": src,
+            "builtin": bool(builtin),
+        }
+
+    def _trim_home_avatar_asset(self, path):
+        if path.suffix.lower() not in HOME_AVATAR_TRIMMABLE_EXTENSIONS:
+            return None
+        try:
+            from PIL import Image
+        except ImportError:
+            return None
+        try:
+            source_mtime = int(path.stat().st_mtime)
+        except OSError:
+            return None
+        trimmed_name = f"{path.stem}-trimmed-{source_mtime}.png"
+        trimmed_path = self.home_avatar_trim_dir / trimmed_name
+        if not trimmed_path.exists():
+            try:
+                image = Image.open(path).convert("RGBA")
+                alpha = image.getchannel("A")
+                bbox = alpha.getbbox()
+                if not bbox:
+                    return None
+                # Fully opaque generated avatars often carry white canvas padding. Convert
+                # near-white pixels to transparent before finding the visual content box.
+                if alpha.getextrema() == (255, 255):
+                    pixels = image.load()
+                    for y in range(image.height):
+                        for x in range(image.width):
+                            red, green, blue, opacity = pixels[x, y]
+                            if opacity and red > 244 and green > 244 and blue > 244:
+                                pixels[x, y] = (red, green, blue, 0)
+                    bbox = image.getchannel("A").getbbox()
+                    if not bbox:
+                        return None
+                trimmed = image.crop(bbox)
+                self.home_avatar_trim_dir.mkdir(parents=True, exist_ok=True)
+                trimmed.save(trimmed_path)
+            except Exception:
+                return None
+        try:
+            return trimmed_path.resolve().relative_to(ROOT.resolve()).as_posix()
+        except ValueError:
+            return None
+
+    def _home_avatar_options(self):
+        options = [self._home_avatar_entry("assets/brand/hrobot-buddy-avatar.svg", "HRobot Buddy", True)]
+        if self.home_avatar_dir.exists():
+            for path in sorted(self.home_avatar_dir.iterdir(), key=lambda item: item.name.lower()):
+                if path == self.home_avatar_trim_dir:
+                    continue
+                if not path.is_file() or path.suffix.lower() not in HOME_AVATAR_EXTENSIONS:
+                    continue
+                try:
+                    src = path.resolve().relative_to(ROOT.resolve()).as_posix()
+                except ValueError:
+                    continue
+                entry = self._home_avatar_entry(src)
+                if entry:
+                    options.append(entry)
+        seen = set()
+        unique_options = []
+        for item in options:
+            if item["src"] in seen:
+                continue
+            seen.add(item["src"])
+            source_path = ROOT / item["src"]
+            display_src = self._trim_home_avatar_asset(source_path) if not item.get("builtin") else None
+            item["displaySrc"] = display_src or item["src"]
+            item["trimmed"] = bool(display_src)
+            item["url"] = quote(item["displaySrc"], safe="/:@?&=%+~#")
+            unique_options.append(item)
+        return unique_options
+
+    def home_avatar_config(self):
+        self.home_avatar_dir.mkdir(parents=True, exist_ok=True)
+        saved = self._read_json(self.home_avatar_config_path, DEFAULT_HOME_AVATAR_CONFIG)
+        if not isinstance(saved, dict):
+            saved = dict(DEFAULT_HOME_AVATAR_CONFIG)
+        options = self._home_avatar_options()
+        selected_src = str(saved.get("selectedSrc") or DEFAULT_HOME_AVATAR_CONFIG["selectedSrc"]).strip().replace("\\", "/")
+        available = {item["src"] for item in options}
+        if selected_src not in available:
+            selected_src = DEFAULT_HOME_AVATAR_CONFIG["selectedSrc"]
+        selected = next((item for item in options if item["src"] == selected_src), options[0])
+        return {
+            "updatedAt": saved.get("updatedAt", ""),
+            "selectedSrc": selected["src"],
+            "selectedUrl": selected["url"],
+            "selectedName": selected["name"],
+            "avatarFolder": self.home_avatar_dir.relative_to(ROOT).as_posix(),
+            "options": options,
+        }
+
+    def save_home_avatar_config(self, selected_src):
+        selected_src = str(selected_src or "").strip().replace("\\", "/")
+        options = self._home_avatar_options()
+        available = {item["src"] for item in options}
+        if selected_src not in available:
+            raise ValueError("Avatar is not in the available list.")
+        payload = {
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "selectedSrc": selected_src,
+        }
+        self.home_avatar_config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.home_avatar_config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return self.home_avatar_config()
+
     def _ensure_design_reference_readme(self):
         if self.design_reference_readme_path.exists():
             return
@@ -2743,34 +3222,42 @@ class Handler(SimpleHTTPRequestHandler):
         return files[0] if files else (None, None)
 
     def _read_multipart_files(self):
+        form = self._read_multipart_form()
+        return [(item.get("filename") or "upload", item.get("content") or b"") for item in form.get("files", [])]
+
+    def _read_multipart_form(self):
         content_type = self.headers.get("Content-Type", "")
         match = re.search(r"boundary=(.+)", content_type)
         if not match:
-            return []
+            return {"fields": {}, "files": []}
         boundary = match.group(1).strip('"').encode("utf-8")
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
+        fields = {}
         files = []
         for part in body.split(b"--" + boundary):
             if b"\r\n\r\n" not in part:
                 continue
             raw_headers, content = part.split(b"\r\n\r\n", 1)
             headers = raw_headers.decode("utf-8", errors="replace")
-            if "filename=" not in headers:
-                continue
-            filename_match = re.search(r'filename="([^"]*)"', headers)
-            filename = filename_match.group(1) if filename_match else "upload"
-            if filename and not filename.isascii():
-                _agent_debug_log(
-                    "server.py:_read_multipart_files",
-                    "non-ascii multipart filename",
-                    {"filename": filename, "path": self.path, "headersPreview": headers[:300]},
-                    "H2",
-                )
             if content.endswith(b"\r\n"):
                 content = content[:-2]
-            files.append((filename, content))
-        return files
+            name_match = re.search(r'name="([^"]*)"', headers)
+            field_name = name_match.group(1) if name_match else ""
+            filename_match = re.search(r'filename="([^"]*)"', headers)
+            if filename_match:
+                filename = filename_match.group(1) or "upload"
+                if filename and not filename.isascii():
+                    _agent_debug_log(
+                        "server.py:_read_multipart_files",
+                        "non-ascii multipart filename",
+                        {"filename": filename, "path": self.path, "headersPreview": headers[:300]},
+                        "H2",
+                    )
+                files.append({"field": field_name, "filename": filename, "content": content})
+            elif field_name:
+                fields[field_name] = content.decode("utf-8-sig", errors="replace")
+        return {"fields": fields, "files": files}
 
     @staticmethod
     def _ai_request_payload(model, messages):
@@ -3615,12 +4102,14 @@ class Handler(SimpleHTTPRequestHandler):
         preset = REPORT_PRESETS.get(report_type or "") or REPORT_PRESETS["talent-review"]
         target_name = self.store._extract_360_report_person_name("", instruction) if report_type == "360" else ""
         selected_assets = selected_assets if isinstance(selected_assets, dict) else None
+        selected_abilities = selected_assets.get("abilities", []) if selected_assets is not None else None
         selected_skills = selected_assets.get("skills", []) if selected_assets is not None else None
         selected_materials = selected_assets.get("materials", []) if selected_assets is not None else None
         assets_text = json.dumps(
             self.store.report_asset_context(
                 report_type,
                 target_name=target_name,
+                selected_abilities=selected_abilities,
                 selected_skills=selected_skills,
                 selected_materials=selected_materials,
             ),
@@ -3630,14 +4119,14 @@ class Handler(SimpleHTTPRequestHandler):
             assets_text = assets_text[:80000] + "\n...内容过长，后续材料已截断。"
         system = (
             "你是资深 HRBP 和组织人才分析顾问，负责基于真实材料生成可直接用于人才复盘的报告。"
-            "请严格依据系统提供的人才盘点、档案、导入 skill 和材料，不得编造评分、姓名、反馈原文或结论。"
-            f"本次报告类型为：{preset['name']}。请遵循对应 skill 或设定材料中的结构、口径和注意事项。"
+            "请严格依据系统提供的人才盘点、档案、能力中心、导入 skill 和材料，不得编造评分、姓名、反馈原文或结论。"
+            f"本次报告类型为：{preset['name']}。请优先遵循能力中心中所选能力的说明、结构、口径和注意事项。"
         )
         if department:
             system += f"\n请只分析部门或组织范围：{department}，不要扩展到无关人员。"
         if report_type == "360" and target_name:
             system += f"\n本次 360 报告对象为：{target_name}。只使用该对象的 360 材料生成报告；如已有标准版与核心版即可生成，不要求必须存在详细版。"
-        user_instruction = instruction or f"请生成一份{preset['name']}，优先使用已导入的 skill 和材料，并结合 2026 人才盘点数据。"
+        user_instruction = instruction or f"请生成一份{preset['name']}，优先使用已选择的能力、skill 和材料，并结合 2026 人才盘点数据。"
         markdown_instruction = (
             "输出格式要求：只返回 Markdown 正文，不要返回 HTML，不要把内容放进代码块。"
             "请使用清晰的一级到三级标题、短段落、项目符号和必要的表格。"
@@ -3647,7 +4136,7 @@ class Handler(SimpleHTTPRequestHandler):
         return [
             {"role": "system", "content": system},
             {"role": "system", "content": f"人才盘点与档案数据：\n{context_text}"},
-            {"role": "system", "content": f"导入的 skill 和分析材料：\n{assets_text}"},
+            {"role": "system", "content": f"能力中心、导入 skill 和分析材料：\n{assets_text}"},
             {"role": "user", "content": user_instruction},
         ]
 
@@ -3789,6 +4278,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/home-memos":
             self._send_json(self.store.home_memos())
             return
+        if path == "/api/home-avatar":
+            self._send_json(self.store.home_avatar_config())
+            return
         if path == "/api/intelligence/key-summary":
             self._send_json(self._build_intelligence_key_summary(query))
             return
@@ -3815,6 +4307,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/report/assets":
             self._send_json(self.store.report_assets())
+            return
+        if path == "/api/report/abilities":
+            self._send_json(self.store.report_abilities())
             return
         if path == "/api/report/presets":
             self._send_json({"presets": self.store.report_presets()})
@@ -3936,6 +4431,21 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as error:
                 self._send_json({"error": str(error)}, status=400)
             return
+        if path == "/api/report/ability":
+            form = self._read_multipart_form()
+            fields = form.get("fields", {})
+            zip_file = next((item for item in form.get("files", []) if item.get("content")), None)
+            try:
+                self._send_json(self.store.save_report_ability(
+                    fields.get("name", ""),
+                    description_md=fields.get("descriptionMd", ""),
+                    zip_filename=zip_file.get("filename", "") if zip_file else "",
+                    zip_content=zip_file.get("content") if zip_file else None,
+                    ability_id=fields.get("id", ""),
+                ))
+            except Exception as error:
+                self._send_json({"error": str(error)}, status=400)
+            return
         if path == "/api/agent-projects/upload":
             filename, content = self._read_multipart_file()
             if not content:
@@ -4012,6 +4522,12 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/home-memos/migrate":
             self._send_json(self.store.save_home_memos(payload.get("records", [])))
+            return
+        if path == "/api/home-avatar":
+            try:
+                self._send_json(self.store.save_home_avatar_config(payload.get("selectedSrc", "")))
+            except ValueError as error:
+                self._send_json({"error": str(error)}, status=400)
             return
         if path == "/api/intelligence/config":
             self._send_json({"config": self.store.save_intelligence_config(payload), "status": self.store.intelligence_update_status()})
@@ -4143,7 +4659,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if selected_assets is not None and any(
                 not isinstance(selected_assets.get(key, []), list)
-                for key in ("skills", "materials")
+                for key in ("abilities", "skills", "materials")
             ):
                 self._send_json({"error": "所选报告资料清单格式不正确。"}, status=400)
                 return
@@ -4173,6 +4689,14 @@ class Handler(SimpleHTTPRequestHandler):
                     "report-generate",
                 )
                 self._send_json({"error": "报告生成异常，请稍后重试或检查服务端日志。"}, status=500)
+            return
+        if path == "/api/report/ability/delete":
+            try:
+                self._send_json(self.store.delete_report_ability(payload.get("id", "")))
+            except FileNotFoundError as error:
+                self._send_json({"error": str(error)}, status=404)
+            except ValueError as error:
+                self._send_json({"error": str(error)}, status=400)
             return
         if path == "/api/report/html":
             try:
@@ -4232,7 +4756,11 @@ def main():
     Handler.allow_remote_clients = args.allow_remote_clients
     start_intelligence_scheduler(Handler.store)
     server = ReusableThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Talent nine-box app running at http://{args.host}:{args.port}/index.html")
+    browser_host = "127.0.0.1" if args.host in {"0.0.0.0", "::", ""} else args.host
+    browser_url = f"http://{browser_host}:{args.port}/index.html"
+    print(f"Talent nine-box app running at {browser_url}")
+    if getattr(sys, "frozen", False) and sys.platform == "darwin":
+        threading.Timer(1.2, lambda: webbrowser.open(browser_url)).start()
     if args.host not in {"127.0.0.1", "localhost", "::1"} and not args.allow_remote_clients:
         print("Remote clients are blocked by default. Add --allow-remote-clients only on a trusted network.")
     server.serve_forever()

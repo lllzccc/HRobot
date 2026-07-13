@@ -32,7 +32,9 @@
     let currentReportDetail = null;
     let currentReportView = "md";
     let reportSearchText = "";
+    let reportAbilities = [];
     const selectedReportAssets = {
+      abilities: new Set(),
       skills: new Set(),
       materials: new Set()
     };
@@ -57,10 +59,13 @@
     const $ = id => document.getElementById(id);
     const HOME_AI_QUESTION_COUNT_KEY = "hrobot.aiQuestionCount";
     const HOME_MEMO_RECORDS_KEY = "hrobot.homeMemoRecords";
+    const DEFAULT_HOME_AVATAR_SRC = "assets/brand/hrobot-buddy-avatar.svg";
+    const AI_CHAT_CONVERSATION_KEY = "hrobot.aiChatConversation";
     const AI_CHAT_QUESTION_HISTORY_KEY = "hrobot.aiQuestionHistory";
     const AI_CHAT_QUESTION_HISTORY_LIMIT = 12;
     const droppedUploadFiles = new Map();
     let homeMemoRecords = [];
+    let homeAvatarConfig = null;
     const formatCount = value => new Intl.NumberFormat("zh-CN").format(Number(value) || 0);
     const setHomeCount = (id, value) => {
       const target = $(id);
@@ -400,6 +405,81 @@
       renderHomeMemoSettings();
     }
 
+    function applyHomeAvatar(config) {
+      const src = config?.selectedUrl || config?.selectedSrc || DEFAULT_HOME_AVATAR_SRC;
+      document.documentElement.style.setProperty("--home-avatar-url", `url("${String(src).replace(/"/g, "%22")}")`);
+      document.querySelectorAll("[data-home-avatar-img]").forEach(image => {
+        image.src = src;
+      });
+    }
+
+    function renderHomeAvatarSettings(config) {
+      homeAvatarConfig = config || {};
+      applyHomeAvatar(homeAvatarConfig);
+      const list = $("homeAvatarPicker");
+      const options = Array.isArray(homeAvatarConfig.options) ? homeAvatarConfig.options : [];
+      if ($("homeAvatarFolder")) $("homeAvatarFolder").textContent = homeAvatarConfig.avatarFolder || "assets/avatars";
+      if (!list) return;
+      if (!options.length) {
+        list.innerHTML = `<div class="empty-report">暂无可选头像。请把 PNG、JPG、WEBP、GIF 或 SVG 放进 assets/avatars。</div>`;
+        return;
+      }
+      const selected = homeAvatarConfig.selectedSrc || DEFAULT_HOME_AVATAR_SRC;
+      list.innerHTML = options.map(item => {
+        const checked = item.src === selected;
+        return `
+          <label class="home-avatar-option${checked ? " active" : ""}">
+            <input type="radio" name="homeAvatarSrc" value="${escapeHtml(item.src)}"${checked ? " checked" : ""}>
+            <span class="home-avatar-thumb"><img src="${escapeHtml(item.url || item.src)}" alt=""></span>
+            <span class="home-avatar-meta">
+              <strong>${escapeHtml(item.name || "Avatar")}</strong>
+              <small>${escapeHtml(item.builtin ? "内置头像" : item.src)}</small>
+            </span>
+          </label>
+        `;
+      }).join("");
+    }
+
+    async function loadHomeAvatar() {
+      const response = await fetch("/api/home-avatar");
+      const payload = await response.json();
+      if (!response.ok || payload.error) throw new Error(payload.error || "头像配置加载失败");
+      renderHomeAvatarSettings(payload);
+      return payload;
+    }
+
+    async function saveHomeAvatar(event) {
+      event.preventDefault();
+      const selectedSrc = document.querySelector("input[name='homeAvatarSrc']:checked")?.value || DEFAULT_HOME_AVATAR_SRC;
+      const status = $("homeAvatarStatus");
+      try {
+        const response = await fetch("/api/home-avatar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ selectedSrc })
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.error) throw new Error(payload.error || "头像保存失败");
+        renderHomeAvatarSettings(payload);
+        if (status) status.textContent = "头像已保存，并同步到首页。";
+      } catch (error) {
+        if (status) status.textContent = `头像保存失败：${error.message}`;
+      }
+    }
+
+    function selectHomeAvatarOption(input) {
+      if (!input) return;
+      document.querySelectorAll(".home-avatar-option").forEach(option => {
+        option.classList.toggle("active", option.contains(input));
+      });
+      const option = (homeAvatarConfig?.options || []).find(item => item.src === input.value);
+      applyHomeAvatar({
+        selectedSrc: input.value,
+        selectedUrl: option?.url || input.value
+      });
+      if ($("homeAvatarStatus")) $("homeAvatarStatus").textContent = "已预览，保存后生效。";
+    }
+
     function renderDesignReferenceFiles(config) {
       const list = $("designReferenceFileList");
       if (!list) return;
@@ -481,12 +561,10 @@
       panels.forEach(panel => {
         const active = panel.dataset.settingsPanel === activeKey;
         panel.classList.toggle("active", active);
-        if (panel.tagName === "DETAILS") panel.open = active;
+        if (panel.tagName === "DETAILS") panel.open = true;
+        panel.toggleAttribute("inert", !active);
+        panel.setAttribute("aria-hidden", active ? "false" : "true");
       });
-      if (options.scroll !== false) {
-        const banner = layout.closest(".page-shell")?.querySelector(".page-banner");
-        (banner || layout).scrollIntoView({ block: "start", behavior: "smooth" });
-      }
     }
 
     function renderAgentProjectCard(project) {
@@ -507,6 +585,7 @@
       const iconText = isBuiltIn ? "盘" : (project.runtime === "static-web" ? "页" : (String(runtimeLabel).includes("Python") ? "Py" : (String(runtimeLabel).includes("Node") || String(runtimeLabel).includes("Vite") || String(runtimeLabel).includes("Next") ? "JS" : "AI")));
       return `
         <article class="agent-project-card" data-agent-project-open="${escapeHtml(project.id || "")}" data-agent-project-id="${escapeHtml(project.id || "")}" title="打开正式页面">
+          <button class="agent-project-delete" type="button" data-agent-project-delete="${escapeHtml(project.id || "")}" title="删除项目" aria-label="删除 ${escapeHtml(project.name || "未命名 Web 项目")}">×</button>
           <div class="agent-project-card-head">
             <span class="agent-project-icon" aria-hidden="true">${escapeHtml(iconText)}</span>
             <button class="agent-project-open-button" type="button" data-agent-project-open="${escapeHtml(project.id || "")}">Open</button>
@@ -661,6 +740,7 @@
       if (String(page) === "8") loadPosterHistory().catch(error => $("designGenerateStatus").textContent = `历史加载失败：${error.message}`);
       if (String(page) === "10") loadAgentProjects().catch(error => $("agentProjectStatus").textContent = `Agent 中心加载失败：${error.message}`);
       if (String(page) === "9") loadHomeMemos().catch(error => $("homeMemoStatus").textContent = `备忘加载失败：${error.message}`);
+      if (String(page) === "9") loadHomeAvatar().catch(error => $("homeAvatarStatus").textContent = `头像加载失败：${error.message}`);
       if (String(page) === "9") loadDesignPromptConfig().catch(error => $("designPromptConfigStatus").textContent = `设计配置加载失败：${error.message}`);
       if (String(page) === "9") loadDataSourceConfig().catch(error => $("dataSourceConfigStatus").textContent = `数据源配置加载失败：${error.message}`);
       if (String(page) === "9") loadIntelligenceConfig().catch(error => $("intelligenceConfigStatus").textContent = `情报配置加载失败：${error.message}`);
@@ -669,6 +749,7 @@
         $("multimodalConfigStatus").textContent = `配置加载失败：${error.message}`;
       });
       if (String(page) === "3" && typeof window.restoreTalentReviewPage === "function") window.restoreTalentReviewPage();
+      if (String(page) === "4") restoreAiConversationState();
     }
 
     function toggleSidebar() {
@@ -683,6 +764,41 @@
       return [...new Set(values.filter(Boolean))];
     }
 
+    function readAiConversationState() {
+      try {
+        const state = JSON.parse(localStorage.getItem(AI_CHAT_CONVERSATION_KEY) || "{}");
+        return state && typeof state === "object" ? state : {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function persistAiConversationState() {
+      const log = $("aiChatLog");
+      const state = {
+        history: aiChatHistory.slice(-40),
+        logHtml: log?.innerHTML || "",
+        updatedAt: new Date().toISOString()
+      };
+      localStorage.setItem(AI_CHAT_CONVERSATION_KEY, JSON.stringify(state));
+    }
+
+    function restoreAiConversationState() {
+      const log = $("aiChatLog");
+      if (!log) return;
+      const state = readAiConversationState();
+      if (!aiChatHistory.length && Array.isArray(state.history)) {
+        aiChatHistory = state.history
+          .filter(item => item && (item.role === "user" || item.role === "assistant"))
+          .map(item => ({ role: item.role, content: String(item.content || "") }))
+          .filter(item => item.content);
+      }
+      if (!log.children.length && state.logHtml) {
+        log.innerHTML = state.logHtml;
+      }
+      if (log.children.length) log.scrollTop = log.scrollHeight;
+    }
+
     function appendAiMessage(role, content, extraHtml = "") {
       const log = $("aiChatLog");
       if (!log) return;
@@ -695,6 +811,7 @@
         </article>
       `);
       log.scrollTop = log.scrollHeight;
+      persistAiConversationState();
     }
 
     async function loadAiConfig() {
@@ -867,13 +984,6 @@
       if ($("serverStatusPort")) $("serverStatusPort").textContent = payload.port ? `${payload.host || "127.0.0.1"}:${payload.port}` : "-";
       if ($("serverStatusPid")) $("serverStatusPid").textContent = payload.pid || "-";
       if ($("serverStatusStartedAt")) $("serverStatusStartedAt").textContent = formatFileTime(payload.startedAt || "");
-      if ($("serverStatusMessage")) {
-        $("serverStatusMessage").textContent = message || (connected && !offline
-          ? `最后检查：${formatFileTime(payload.checkedAt || "")}`
-          : offline
-            ? "服务器当前不可达，请确认本地服务是否运行。"
-            : "正在检查服务器连接。");
-      }
     }
 
     async function loadServerStatus(options = {}) {
@@ -1698,6 +1808,7 @@
       saveAiQuestionHistory(message);
       appendAiMessage("user", `【人才档案】${message}`);
       aiChatHistory.push({ role: "user", content: message });
+      persistAiConversationState();
       appendAiMessage("assistant", "正在调用固定人员档案流程，并校验 MCP 人才档案字段...");
       try {
         const response = await fetch("/api/mcp/person-profile-card", {
@@ -1710,17 +1821,20 @@
         if (waiting) waiting.remove();
         if (!response.ok || payload.error) {
           appendAiMessage("assistant", payload.error || "人员档案生成失败。");
+          persistAiConversationState();
           return;
         }
         storeAiProfile(payload.profile);
         const doneMessage = `${aiProfileValue(payload.profile?.basicInfo?.name || payload.profile?.name, "该人员")}的人员档案已生成，点击下方卡片可查看完整简历。`;
         appendAiMessage("assistant", doneMessage, renderAiProfileArtifact(payload.profile));
         aiChatHistory.push({ role: "assistant", content: doneMessage });
+        persistAiConversationState();
         setHomeCount("homeAiQuestionCount", incrementLocalCount(HOME_AI_QUESTION_COUNT_KEY));
       } catch (error) {
         const waiting = $("aiChatLog").lastElementChild;
         if (waiting) waiting.remove();
         appendAiMessage("assistant", `人员档案生成失败：${error.message}`);
+        persistAiConversationState();
       } finally {
         if (button) button.disabled = false;
       }
@@ -1741,6 +1855,7 @@
       saveAiQuestionHistory(message);
       appendAiMessage("user", message);
       aiChatHistory.push({ role: "user", content: message });
+      persistAiConversationState();
       appendAiMessage("assistant", "正在读取盘点结果和人才档案，并调用模型分析...");
       const response = await fetch("/api/ai/chat", {
         method: "POST",
@@ -1753,6 +1868,7 @@
       const reply = payload.message || payload.error || "没有收到模型回复。";
       appendAiMessage("assistant", reply);
       aiChatHistory.push({ role: "assistant", content: reply });
+      persistAiConversationState();
       if (response.ok && !payload.error) {
         setHomeCount("homeAiQuestionCount", incrementLocalCount(HOME_AI_QUESTION_COUNT_KEY));
       }
@@ -1967,13 +2083,17 @@
       const detail = $("generatedReport");
       if (!library) return;
       const reports = filteredReportCards(generatedReports);
+      const keyword = reportSearchText.trim();
+      const displayReports = targetId === "reportLibraryGenerate" && !keyword
+        ? reports.slice(0, options.limit || 4)
+        : reports;
       if (targetId === "reportLibrary" && detail) detail.hidden = true;
       library.hidden = false;
-      if (!reports.length) {
+      if (!displayReports.length) {
         library.innerHTML = `<div class="empty-report">${reportSearchText.trim() ? "没有匹配的报告。" : "暂无生成报告。请先到 05 报告生成选择预设并生成报告。"}</div>`;
         return;
       }
-      library.innerHTML = reports.map(reportCardHtml).join("");
+      library.innerHTML = displayReports.map(reportCardHtml).join("");
       bindReportCards(library);
     }
 
@@ -1985,7 +2105,7 @@
       renderHomeLatestReport(generatedReports);
       syncReportSearchInputs();
       renderReportLibrary("reportLibrary");
-      renderReportLibrary("reportLibraryGenerate");
+      renderReportLibrary("reportLibraryGenerate", { limit: 4 });
     }
 
     async function openGeneratedReport(reportId) {
@@ -2598,39 +2718,206 @@ body.static-talent-report {
       return (items || []).map(item => `
         <div class="asset-item${reportAssetKind && selectedReportAssets[reportAssetKind].has(item.filename) ? " selected" : ""}"
           ${reportAssetKind ? `role="checkbox" tabindex="0" aria-checked="${selectedReportAssets[reportAssetKind].has(item.filename)}" data-report-asset-kind="${reportAssetKind}" data-report-asset-filename="${escapeHtml(item.filename)}"` : ""}>
-          <strong>${escapeHtml(item.filename)}</strong>
+          <strong class="asset-name">${escapeHtml(item.filename)}</strong>
           <span class="asset-meta">
-            <span>${escapeHtml(formatFileSize(item.size))} · ${escapeHtml(formatFileTime(item.updatedAt))}</span>
+            <span class="asset-size">${escapeHtml(formatFileSize(item.size))}</span>
+            <span class="asset-time">${escapeHtml(formatFileTime(item.updatedAt))}</span>
             ${deleteType ? `<button class="asset-delete" type="button" title="删除文件" data-file-delete="${escapeHtml(deleteType)}" data-filename="${escapeHtml(item.filename)}">删除</button>` : ""}
           </span>
         </div>
-      `).join("") || `<div class="asset-item"><strong>暂无文件</strong><span>-</span></div>`;
+      `).join("") || `<div class="asset-item"><strong class="asset-name">暂无文件</strong><span class="asset-meta">-</span></div>`;
+    }
+
+    function renderReportAbilityCards(items = reportAbilities) {
+      const target = $("reportAbilityList");
+      if (!target) return;
+      const abilities = Array.isArray(items) ? items : [];
+      if (!abilities.length) {
+        target.innerHTML = `<div class="empty-report">暂无能力。点击“添加能力”创建第一个报告能力。</div>`;
+        return;
+      }
+      target.innerHTML = abilities.map(ability => {
+        const selected = selectedReportAssets.abilities.has(ability.id);
+        const builtin = ability.sourceType === "builtin";
+        const zipMeta = ability.zipFilename
+          ? `${ability.zipFilename} · ${formatFileSize(ability.zipSize)}`
+          : builtin
+            ? ""
+          : "未上传 ZIP";
+        return `
+          <article class="ability-card${selected ? " selected" : ""}${builtin ? " builtin" : ""}" role="checkbox" tabindex="0" aria-checked="${selected}" data-report-ability-id="${escapeHtml(ability.id)}" title="${escapeHtml(ability.summary || ability.descriptionMd || "暂无能力说明。")}">
+            <div class="ability-card-top">
+              <span class="ability-avatar" aria-hidden="true">${escapeHtml(String(ability.name || "能").slice(0, 1))}</span>
+              <div>
+                <h3>${escapeHtml(ability.name || "未命名能力")}</h3>
+              </div>
+            </div>
+            <div class="ability-card-foot">
+              <span class="ability-status-chip">${selected ? "已选" : (builtin ? "内置" : "自定义")}</span>
+              <button type="button" data-report-ability-edit="${escapeHtml(ability.id)}">编辑</button>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function openReportAbilityEditor(ability = null) {
+      const form = $("reportAbilityForm");
+      if (!form) return;
+      $("reportAbilityIdInput").value = ability?.id || "";
+      $("reportAbilityNameInput").value = ability?.name || "";
+      $("reportAbilityDescriptionInput").value = ability?.descriptionMd || "";
+      resetUploadInput("reportAbilityZipInput");
+      const deleteButton = $("deleteReportAbilityBtn");
+      if (deleteButton) {
+        deleteButton.hidden = !ability || ability.sourceType === "builtin";
+        deleteButton.dataset.reportAbilityDelete = ability?.id || "";
+      }
+      form.hidden = false;
+      $("reportAbilityStatus").textContent = ability?.sourceType === "builtin"
+        ? "正在编辑内置能力，保存后会覆盖默认说明。"
+        : ability
+          ? "正在编辑能力，保存后会覆盖名称与说明。"
+          : "填写名称、说明，可选择上传 ZIP。";
+      $("reportAbilityNameInput").focus();
+    }
+
+    function closeReportAbilityEditor() {
+      const form = $("reportAbilityForm");
+      if (!form) return;
+      form.hidden = true;
+      form.reset();
+      resetUploadInput("reportAbilityZipInput");
+      const deleteButton = $("deleteReportAbilityBtn");
+      if (deleteButton) {
+        deleteButton.hidden = true;
+        deleteButton.dataset.reportAbilityDelete = "";
+      }
+      $("reportAbilityStatus").textContent = "";
+    }
+
+    function toggleReportAbility(id) {
+      if (!id) return;
+      if (selectedReportAssets.abilities.has(id)) {
+        selectedReportAssets.abilities.delete(id);
+      } else {
+        selectedReportAssets.abilities.add(id);
+      }
+      renderReportAbilityCards();
+      syncSelectedReportAssetsToInstruction();
+    }
+
+    async function saveReportAbility(event) {
+      event.preventDefault();
+      const status = $("reportAbilityStatus");
+      const name = $("reportAbilityNameInput").value.trim();
+      const descriptionMd = $("reportAbilityDescriptionInput").value.trim();
+      const zipFile = uploadFilesForInput("reportAbilityZipInput")[0];
+      if (!name) {
+        status.textContent = "请先填写能力名称。";
+        $("reportAbilityNameInput").focus();
+        return;
+      }
+      status.textContent = "正在保存能力...";
+      const form = new FormData();
+      form.append("id", $("reportAbilityIdInput").value.trim());
+      form.append("name", name);
+      form.append("descriptionMd", descriptionMd);
+      if (zipFile) form.append("zip", zipFile);
+      try {
+        const response = await fetch("/api/report/ability", { method: "POST", body: form });
+        const payload = await response.json();
+        if (!response.ok || payload.error) throw new Error(payload.error || "能力保存失败");
+        reportAbilities = payload.abilities || [];
+        selectedReportAssets.abilities.add(payload.ability.id);
+        closeReportAbilityEditor();
+        renderReportAbilityCards();
+        syncSelectedReportAssetsToInstruction();
+      } catch (error) {
+        status.textContent = `保存失败：${error.message}`;
+      }
+    }
+
+    async function deleteReportAbility(id) {
+      const ability = reportAbilities.find(item => item.id === id);
+      if (!ability) return;
+      if (!confirm(`确定删除能力「${ability.name}」吗？`)) return;
+      const response = await fetch("/api/report/ability/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id })
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.error) throw new Error(payload.error || "能力删除失败");
+      reportAbilities = payload.abilities || [];
+      selectedReportAssets.abilities.delete(id);
+      closeReportAbilityEditor();
+      renderReportAbilityCards();
+      syncSelectedReportAssetsToInstruction();
+    }
+
+    function presetAbilityForReportType(type) {
+      return reportAbilities.find(ability => ability.sourceType === "builtin" && ability.presetId === type);
+    }
+
+    function selectPresetAbilityForReportType(type) {
+      const presetAbility = presetAbilityForReportType(type);
+      if (!presetAbility) return;
+      const presetAbilityIds = new Set(
+        reportAbilities
+          .filter(ability => ability.sourceType === "builtin" && ability.presetId)
+          .map(ability => ability.id)
+      );
+      selectedReportAssets.abilities.forEach(id => {
+        if (presetAbilityIds.has(id)) selectedReportAssets.abilities.delete(id);
+      });
+      selectedReportAssets.abilities.add(presetAbility.id);
+      renderReportAbilityCards();
+      syncSelectedReportAssetsToInstruction();
     }
 
     function selectedReportAssetBlock() {
+      const abilityNames = reportAbilities
+        .filter(ability => selectedReportAssets.abilities.has(ability.id))
+        .map(ability => ability.name);
       const skillNames = [...selectedReportAssets.skills];
       const materialNames = [...selectedReportAssets.materials];
-      if (!skillNames.length && !materialNames.length) return "";
+      if (!abilityNames.length && !skillNames.length && !materialNames.length) return "";
       const lines = ["【已选报告资料】"];
+      if (abilityNames.length) lines.push(`- 能力：${abilityNames.join("、")}`);
       if (skillNames.length) lines.push(`- Skill：${skillNames.join("、")}`);
       if (materialNames.length) lines.push(`- 分析材料：${materialNames.join("、")}`);
       return lines.join("\n");
     }
 
+    function selectedReportAssetChipsHtml() {
+      const abilityNames = reportAbilities
+        .filter(ability => selectedReportAssets.abilities.has(ability.id))
+        .map(ability => ability.name);
+      const materialNames = [...selectedReportAssets.materials];
+      const skillNames = [...selectedReportAssets.skills];
+      const chips = [
+        ...abilityNames.map(name => ({ type: "能力", name })),
+        ...materialNames.map(name => ({ type: "材料", name })),
+        ...skillNames.map(name => ({ type: "Skill", name })),
+      ];
+      if (!chips.length) return `<span class="report-selection-empty">尚未选择能力或材料</span>`;
+      return chips.map(item => `
+        <span class="report-selection-chip">
+          <strong>${escapeHtml(item.type)}</strong>
+          ${escapeHtml(item.name)}
+        </span>
+      `).join("");
+    }
+
     function syncSelectedReportAssetsToInstruction() {
       const input = $("reportInstructionInput");
       if (!input) return;
-      const selectionPattern = /\n{0,2}【已选报告资料】(?:\r?\n-(?: Skill| 分析材料)：[^\r\n]*)*/g;
-      const manualInstruction = input.value.replace(selectionPattern, "").trimEnd();
-      const selectionBlock = selectedReportAssetBlock();
-      input.value = [manualInstruction, selectionBlock].filter(Boolean).join("\n\n");
-      const skillCount = selectedReportAssets.skills.size;
-      const materialCount = selectedReportAssets.materials.size;
+      const selectionPattern = /\n{0,2}【已选报告资料】(?:\r?\n-(?: 能力| Skill| 分析材料)：[^\r\n]*)*/g;
+      input.value = input.value.replace(selectionPattern, "").trimEnd();
       const status = $("reportAssetSelectionStatus");
       if (status) {
-        status.textContent = skillCount || materialCount
-          ? `已选 ${skillCount} 个 Skill、${materialCount} 份材料；再次点击可取消。生成时只读取这些资料。`
-          : "可点击下方已导入的 Skill 或材料，自动回填到报告要求。";
+        status.innerHTML = selectedReportAssetChipsHtml();
       }
     }
 
@@ -2678,15 +2965,44 @@ body.static-talent-report {
       }
       const reportAsset = event.target.closest("[data-report-asset-kind]");
       if (reportAsset) toggleReportAsset(reportAsset);
+      const abilityDelete = event.target.closest("[data-report-ability-delete]");
+      if (abilityDelete) {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteReportAbility(abilityDelete.dataset.reportAbilityDelete).catch(error => {
+          const status = $("reportAbilityStatus") || $("reportGenerateStatus");
+          if (status) status.textContent = `删除失败：${error.message}`;
+        });
+        return;
+      }
+      const abilityEdit = event.target.closest("[data-report-ability-edit]");
+      if (abilityEdit) {
+        event.preventDefault();
+        event.stopPropagation();
+        openReportAbilityEditor(reportAbilities.find(item => item.id === abilityEdit.dataset.reportAbilityEdit));
+        return;
+      }
+      const abilityCard = event.target.closest("[data-report-ability-id]");
+      if (abilityCard) {
+        event.preventDefault();
+        toggleReportAbility(abilityCard.dataset.reportAbilityId);
+      }
     });
 
     document.addEventListener("keydown", event => {
       if (event.key !== "Enter" && event.key !== " ") return;
       if (event.target.closest("[data-file-delete]")) return;
       const reportAsset = event.target.closest("[data-report-asset-kind]");
-      if (!reportAsset) return;
-      event.preventDefault();
-      toggleReportAsset(reportAsset);
+      if (reportAsset) {
+        event.preventDefault();
+        toggleReportAsset(reportAsset);
+        return;
+      }
+      const abilityCard = event.target.closest("[data-report-ability-id]");
+      if (abilityCard && !event.target.closest("button")) {
+        event.preventDefault();
+        toggleReportAbility(abilityCard.dataset.reportAbilityId);
+      }
     });
 
     async function loadImportSources() {
@@ -2704,8 +3020,13 @@ body.static-talent-report {
     async function loadReportAssets() {
       const response = await fetch("/api/report/assets");
       const payload = await response.json();
+      reportAbilities = Array.isArray(payload.abilities) ? payload.abilities : [];
+      const availableAbilities = new Set(reportAbilities.map(item => item.id));
       const availableSkills = new Set((payload.skills || []).map(item => item.filename));
       const availableMaterials = new Set((payload.materials || []).map(item => item.filename));
+      selectedReportAssets.abilities.forEach(id => {
+        if (!availableAbilities.has(id)) selectedReportAssets.abilities.delete(id);
+      });
       selectedReportAssets.skills.forEach(filename => {
         if (!availableSkills.has(filename)) selectedReportAssets.skills.delete(filename);
       });
@@ -2714,6 +3035,7 @@ body.static-talent-report {
       });
       if ($("reportSkillAssetList")) $("reportSkillAssetList").innerHTML = renderFileItems(payload.skills || [], "report-skill");
       if ($("reportMaterialAssetList")) $("reportMaterialAssetList").innerHTML = renderFileItems(payload.materials || [], "report-material");
+      renderReportAbilityCards(reportAbilities);
       syncSelectedReportAssetsToInstruction();
     }
 
@@ -2741,17 +3063,18 @@ body.static-talent-report {
       event.preventDefault();
       const status = $("reportGenerateStatus");
       const selectedAssets = {
+        abilities: [...selectedReportAssets.abilities],
         skills: [...selectedReportAssets.skills],
         materials: [...selectedReportAssets.materials]
       };
-      status.textContent = "正在读取人才盘点、档案、skill 和分析材料，并调用模型生成 MD 报告...";
+      status.textContent = "正在读取人才盘点、档案、能力中心和分析材料，并调用模型生成 MD 报告...";
       const response = await fetch("/api/report/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reportType: $("reportTypeInput").value,
           instruction: $("reportInstructionInput").value.trim(),
-          ...(selectedAssets.skills.length || selectedAssets.materials.length ? { selectedAssets } : {})
+          ...(selectedAssets.abilities.length || selectedAssets.skills.length || selectedAssets.materials.length ? { selectedAssets } : {})
         })
       });
       const payload = await response.json();
@@ -2773,13 +3096,7 @@ body.static-talent-report {
       document.querySelectorAll("[data-report-type]").forEach(button => {
         button.classList.toggle("active", button.dataset.reportType === type);
       });
-      const active = document.querySelector(`[data-report-type="${type}"]`);
-      const settingFile = active?.dataset.settingFile || "";
-      if ($("reportPresetStatus")) {
-        $("reportPresetStatus").textContent = settingFile
-          ? `当前优先读取：${settingFile}`
-          : "当前优先读取：报告预设";
-      }
+      selectPresetAbilityForReportType(type);
     }
 
     initFileDropzones();
@@ -2908,6 +3225,19 @@ body.static-talent-report {
       if ($("agentProjectZipInput").files[0]) uploadAgentProjectFile($("agentProjectZipInput").files[0]);
     });
     $("homeMemoForm").addEventListener("submit", saveHomeMemo);
+    $("homeAvatarForm")?.addEventListener("submit", saveHomeAvatar);
+    $("refreshHomeAvatarBtn")?.addEventListener("click", () => {
+      loadHomeAvatar()
+        .then(() => {
+          if ($("homeAvatarStatus")) $("homeAvatarStatus").textContent = "头像列表已刷新。";
+        })
+        .catch(error => {
+          if ($("homeAvatarStatus")) $("homeAvatarStatus").textContent = `头像刷新失败：${error.message}`;
+        });
+    });
+    $("homeAvatarPicker")?.addEventListener("change", event => {
+      if (event.target.matches("input[name='homeAvatarSrc']")) selectHomeAvatarOption(event.target);
+    });
     $("homeMemoRecordList").addEventListener("click", event => {
       const deleteButton = event.target.closest("[data-memo-delete]");
       if (deleteButton) {
@@ -3039,7 +3369,10 @@ body.static-talent-report {
       renderAiQuestionHistory();
       $("aiChatInput").focus();
     });
-    $("skillImportForm").addEventListener("submit", importReportSkill);
+    $("reportAbilityForm")?.addEventListener("submit", saveReportAbility);
+    $("addReportAbilityBtn")?.addEventListener("click", () => openReportAbilityEditor());
+    $("cancelReportAbilityEditBtn")?.addEventListener("click", closeReportAbilityEditor);
+    $("skillImportForm")?.addEventListener("submit", importReportSkill);
     $("materialImportForm").addEventListener("submit", importReportMaterial);
     $("reportGenerateForm").addEventListener("submit", generateReport);
     document.querySelectorAll("[data-report-type]").forEach(button => {
@@ -3091,6 +3424,9 @@ body.static-talent-report {
     $("refreshImportSourcesRosterBtn").addEventListener("click", () => loadImportSources().catch(error => $("employeeRosterImportStatus").textContent = `扫描失败：${error.message}`));
     loadHomeMemos().catch(error => {
       $("homeMemoStatus").textContent = `备忘加载失败：${error.message}`;
+    });
+    loadHomeAvatar().catch(error => {
+      if ($("homeAvatarStatus")) $("homeAvatarStatus").textContent = `头像加载失败：${error.message}`;
     });
     loadDesignPromptConfig().catch(error => {
       $("designPromptConfigStatus").textContent = `设计配置加载失败：${error.message}`;

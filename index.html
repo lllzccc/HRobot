@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HR一站式AI工作台</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="static/css/app.css?v=20260703-remove-builtin-report">
+  <link rel="stylesheet" href="static/css/app.css?v=20260706-report-display-grid">
 
 </head>
 <body>
@@ -39,10 +39,8 @@
           <section class="home-ai-panel" aria-label="HRobot AI交互工作台">
             <header class="home-ai-hero">
               <h1>
-                <span class="home-ai-title-main home-ai-logo-title">
-                  <img src="assets/brand/hrobot-logo-home-black@4x.png" alt="HRobot">
-                </span>
-                <span class="home-ai-title-sub">HRBP <em>AI</em> Studio</span>
+                <span class="home-ai-title-main home-ai-logo-title">HRobot</span>
+                <span class="home-ai-title-sub"><span>HRBP</span><em>AI</em><span>Studio</span></span>
               </h1>
             </header>
 
@@ -53,6 +51,9 @@
             </div>
 
             <form class="home-ai-composer" id="homeAiForm">
+              <div class="home-ai-buddy" aria-hidden="true">
+                <img id="homeBuddyAvatar" data-home-avatar-img src="assets/brand/hrobot-buddy-avatar.svg" alt="">
+              </div>
               <textarea id="homeAiInput" rows="4" placeholder="今天想分析什么？例如：生成张三的人才档案，或分析美术中心的高潜人才分布。"></textarea>
               <div class="home-ai-composer-bar">
                 <div class="home-ai-tools" aria-label="当前任务上下文">
@@ -332,34 +333,21 @@
               </div>
               <div>
                 <h1>报告生成</h1>
-                <p>生成记录会直接沉淀为报告卡片；下方可继续导入 skill 框架与分析材料。</p>
+                <p>生成记录会直接沉淀为报告卡片；下方可切换能力并补充分析材料。</p>
               </div>
             </div>
           </header>
 
           <section class="report-builder">
-            <section class="report-shelf" aria-label="已生成报告">
-              <div class="card-title-row">
-                <h2>已生成报告</h2>
-                <label class="report-search">
-                  <span>搜索报告</span>
-                  <input id="reportSearchInputGenerate" type="search" placeholder="输入标题、类型或材料来源">
-                </label>
-              </div>
-              <div class="report-library report-library-strip" id="reportLibraryGenerate">
-                <div class="empty-report">暂无生成报告。选择预设并生成后会显示在这里。</div>
-              </div>
-            </section>
             <form class="import-card report-generate-card" id="reportGenerateForm">
               <h2>生成报告</h2>
-              <p>输入本次报告要求，再选择一个报告预设。系统会优先匹配已导入的对应 skill。</p>
-              <input id="reportTypeInput" type="hidden" value="talent-review">
+              <input id="reportTypeInput" type="hidden" value="">
               <div class="report-prompt-shell">
                 <span class="report-prompt-plus">+</span>
                 <textarea id="reportInstructionInput" placeholder="有问题，尽管问。例如：重点分析高潜人才分布、关键组织风险、校准后变化和培养建议。"></textarea>
                 <button class="primary report-submit" type="submit">生成报告</button>
               </div>
-              <div class="status-line report-asset-selection-status" id="reportAssetSelectionStatus">可点击下方已导入的 Skill 或材料，自动回填到报告要求。</div>
+              <div class="status-line report-asset-selection-status" id="reportAssetSelectionStatus"></div>
               <div class="report-type-actions" aria-label="报告类型">
                 <button class="report-type-action" type="button" data-report-type="360" data-setting-file="360报告设定说明.md">
                   <span>360报告</span>
@@ -367,30 +355,73 @@
                 <button class="report-type-action" type="button" data-report-type="org-diagnosis" data-setting-file="组织诊断报告设定说明.md">
                   <span>组织诊断报告</span>
                 </button>
-                <button class="report-type-action active" type="button" data-report-type="talent-review" data-setting-file="人才盘点报告设定说明.md">
+                <button class="report-type-action" type="button" data-report-type="talent-review" data-setting-file="人才盘点报告设定说明.md">
                   <span>人才盘点报告</span>
                 </button>
               </div>
-              <div class="status-line" id="reportPresetStatus">当前优先读取：人才盘点报告设定说明.md</div>
               <div class="status-line" id="reportGenerateStatus"></div>
             </form>
-            <div class="report-import-grid">
-              <form class="import-card" id="skillImportForm">
-                <h2>导入 skill 框架</h2>
-                <p>上传用于报告生成的分析框架、输出结构、判断口径或提示词文件，支持文本、Markdown、JSON 等材料。</p>
-                <div class="file-dropzone" data-file-dropzone="skillFileInput" tabindex="0" role="button" aria-label="拖拽或选择 skill 文件">
-                  <input id="skillFileInput" type="file">
-                  <span class="file-dropzone-title" data-file-dropzone-title>拖入文件或点击选择</span>
-                  <span class="file-dropzone-meta" data-file-dropzone-meta>支持文本、Markdown、JSON 等材料</span>
+            <section class="report-shelf" aria-label="已生成报告">
+              <div class="card-title-row report-shelf-head">
+                <div>
+                  <h2>最近生成</h2>
+                  <p class="report-shelf-hint">默认展示最近 4 份报告。</p>
                 </div>
-                <button class="primary" type="submit">导入 skill</button>
-                <div class="status-line" id="skillImportStatus"></div>
+                <div class="report-shelf-tools">
+                  <label class="report-search">
+                    <span>搜索报告</span>
+                    <input id="reportSearchInputGenerate" type="search" placeholder="输入标题、类型或材料来源">
+                  </label>
+                  <button type="button" class="report-view-all" data-home-page="2">查看全部</button>
+                </div>
+              </div>
+              <div class="report-library report-library-strip" id="reportLibraryGenerate">
+                <div class="empty-report">暂无生成报告。选择预设并生成后会显示在这里。</div>
+              </div>
+            </section>
+            <section class="import-card ability-center" id="abilityCenter">
                 <div class="card-title-row">
-                  <h2>已导入 skill</h2>
-                  <button type="button" id="refreshReportAssetsBtn">刷新</button>
+                  <div>
+                    <h2>能力中心</h2>
+                    <p>保存常用报告专家能力。生成报告时，选中的能力会提供结构、口径、语气和输出要求。</p>
+                  </div>
+                  <div class="ability-center-actions">
+                    <button type="button" id="addReportAbilityBtn">添加能力</button>
+                    <button type="button" id="refreshReportAssetsBtn">刷新</button>
+                  </div>
                 </div>
-                <div id="reportSkillAssetList" class="asset-list compact-file-list" aria-label="可选的已导入 Skill"></div>
-              </form>
+                <form class="ability-editor" id="reportAbilityForm" hidden>
+                  <input id="reportAbilityIdInput" type="hidden">
+                  <div class="ability-editor-grid">
+                    <div class="field">
+                      <label for="reportAbilityNameInput">能力名称</label>
+                      <input id="reportAbilityNameInput" placeholder="例如：干部360报告专家">
+                    </div>
+                    <div class="field">
+                      <label for="reportAbilityZipInput">Skill ZIP</label>
+                      <div class="file-dropzone" data-file-dropzone="reportAbilityZipInput" tabindex="0" role="button" aria-label="拖拽或选择能力 ZIP">
+                        <input id="reportAbilityZipInput" type="file" accept=".zip,application/zip">
+                        <span class="file-dropzone-title" data-file-dropzone-title>拖入 ZIP 或点击选择</span>
+                        <span class="file-dropzone-meta" data-file-dropzone-meta>支持包含 Markdown、JSON、脚本或模板的 skill 包</span>
+                      </div>
+                    </div>
+                    <div class="field ability-editor-md">
+                      <label for="reportAbilityDescriptionInput">能力说明 MD</label>
+                      <textarea id="reportAbilityDescriptionInput" rows="9" placeholder="写清楚这个能力的定位、适用场景、输出结构、判断口径、语气要求和禁忌。"></textarea>
+                    </div>
+                  </div>
+                  <div class="ability-editor-actions">
+                    <button class="danger" type="button" id="deleteReportAbilityBtn" hidden>删除能力</button>
+                    <button class="primary" type="submit">保存能力</button>
+                    <button type="button" id="cancelReportAbilityEditBtn">取消</button>
+                    <span class="status-line" id="reportAbilityStatus"></span>
+                  </div>
+                </form>
+                <div class="ability-card-grid" id="reportAbilityList" aria-label="报告能力列表">
+                  <div class="empty-report">暂无能力。点击“添加能力”创建第一个报告能力。</div>
+                </div>
+              </section>
+            <div class="report-import-grid">
               <form class="import-card" id="materialImportForm">
                 <h2>导入其他分析材料</h2>
                 <p>上传业务背景、组织说明、会议纪要、补充分析等材料。AI 会结合人才盘点结果与这些材料生成报告。</p>
@@ -707,7 +738,7 @@
               <button class="active" type="button" data-settings-target="data">数据源</button>
               <button type="button" data-settings-target="model">模型配置</button>
               <button type="button" data-settings-target="design">设计中心</button>
-              <button type="button" data-settings-target="memo">首页备忘</button>
+              <button type="button" data-settings-target="memo">首页偏好</button>
               <button type="button" data-settings-target="intelligence">情报中心</button>
               <button type="button" data-settings-target="update">应用更新</button>
               <button type="button" data-settings-target="status">运行状态</button>
@@ -876,10 +907,28 @@
             <details class="settings-section" data-settings-panel="memo">
               <summary>
                 <div class="settings-summary-title">
-                  <h2>首页备忘录</h2>
+                  <h2>首页偏好</h2>
                 </div>
                 <span class="settings-summary-icon" aria-hidden="true">⌄</span>
               </summary>
+              <div class="settings-section-body memo-settings-card home-preferences-card">
+                <form class="settings-subform home-avatar-form" id="homeAvatarForm">
+                  <h3>首页头像</h3>
+                  <p>选择后会同步到首页和 AI 问答助手头像。</p>
+                  <div class="home-avatar-picker" id="homeAvatarPicker" role="radiogroup" aria-label="首页头像"></div>
+                  <div class="form-actions">
+                    <button class="primary" type="submit">保存头像</button>
+                    <button type="button" id="refreshHomeAvatarBtn">刷新头像</button>
+                    <span class="status-line" id="homeAvatarStatus"></span>
+                  </div>
+                  <div class="memo-record-list">
+                    <div class="memo-record-item">
+                      <span class="memo-record-date">头像目录</span>
+                      <span class="memo-record-text" id="homeAvatarFolder">assets/avatars</span>
+                    </div>
+                  </div>
+                </form>
+              </div>
               <form class="settings-section-body memo-settings-card" id="homeMemoForm">
               <div class="memo-settings-grid">
                 <div class="field">
@@ -906,75 +955,91 @@
                 <span class="settings-summary-icon" aria-hidden="true">⌄</span>
               </summary>
               <form class="settings-section-body intelligence-settings-card compact-intelligence-settings" id="intelligenceConfigForm">
-              <div class="settings-fieldset-title">
-                <h3>自动更新</h3>
-                <p>控制每日自动抓取的时间、渠道和来源范围。</p>
-              </div>
-              <div class="intelligence-control-row">
-                <div class="field intelligence-toggle-field">
-                  <label for="intelligenceAutoEnabled">自动更新</label>
-                  <select class="settings-native-sync" id="intelligenceAutoEnabled" aria-hidden="true" tabindex="-1">
-                    <option value="true">开启</option>
-                    <option value="false">关闭</option>
-                  </select>
-                  <button class="geist-switch" id="intelligenceAutoToggle" type="button" role="switch" aria-checked="true" data-toggle-select="intelligenceAutoEnabled">
-                    <span></span>
-                    <strong>开启</strong>
-                  </button>
+              <section class="intelligence-config-block">
+                <div class="settings-fieldset-title">
+                  <h3>自动更新</h3>
+                  <p>先决定是否启用，再配置每日抓取参数。</p>
                 </div>
-                <div class="field intelligence-time-field">
-                  <label for="intelligenceRunAt">每日时间</label>
-                  <input id="intelligenceRunAt" class="query-input" type="time" value="10:00">
-                </div>
-                <div class="field intelligence-number-field">
-                  <label for="intelligenceMaxPerQuery">每词条数</label>
-                  <input id="intelligenceMaxPerQuery" class="query-input" type="number" min="1" max="10" value="3">
-                </div>
-                <div class="field intelligence-number-field">
-                  <label for="intelligenceWechatLimit">微信全文数</label>
-                  <input id="intelligenceWechatLimit" class="query-input" type="number" min="0" max="5" value="1">
-                </div>
-              </div>
-              <div class="settings-fieldset-title">
-                <h3>检索范围</h3>
-                <p>用分段控件选择情报频道与检索来源。</p>
-              </div>
-              <div class="intelligence-segment-grid">
-                <div class="field">
-                  <label for="intelligenceChannelConfig">更新渠道</label>
-                  <select class="settings-native-sync" id="intelligenceChannelConfig" aria-hidden="true" tabindex="-1">
-                    <option value="all">全部</option>
-                    <option value="ai_hr">AI × HR</option>
-                    <option value="game_org">游戏组织</option>
-                  </select>
-                  <div class="geist-segment" data-segment-for="intelligenceChannelConfig" role="group" aria-label="更新渠道">
-                    <button class="active" type="button" data-segment-value="all">全部</button>
-                    <button type="button" data-segment-value="ai_hr">AI × HR</button>
-                    <button type="button" data-segment-value="game_org">游戏组织</button>
+                <div class="intelligence-auto-flow">
+                  <div class="field intelligence-toggle-field">
+                    <label for="intelligenceAutoEnabled">总开关</label>
+                    <select class="settings-native-sync" id="intelligenceAutoEnabled" aria-hidden="true" tabindex="-1">
+                      <option value="true">开启</option>
+                      <option value="false">关闭</option>
+                    </select>
+                    <button class="geist-switch" id="intelligenceAutoToggle" type="button" role="switch" aria-checked="true" data-toggle-select="intelligenceAutoEnabled">
+                      <span></span>
+                      <strong>开启</strong>
+                    </button>
+                  </div>
+                  <div class="intelligence-control-row">
+                    <div class="field intelligence-time-field">
+                      <label for="intelligenceRunAt">每日时间</label>
+                      <input id="intelligenceRunAt" class="query-input" type="time" value="10:00">
+                    </div>
+                    <div class="field intelligence-number-field">
+                      <label for="intelligenceMaxPerQuery">每词条数</label>
+                      <input id="intelligenceMaxPerQuery" class="query-input" type="number" min="1" max="10" value="3">
+                    </div>
+                    <div class="field intelligence-number-field">
+                      <label for="intelligenceWechatLimit">微信全文数</label>
+                      <input id="intelligenceWechatLimit" class="query-input" type="number" min="0" max="5" value="1">
+                    </div>
                   </div>
                 </div>
-                <div class="field">
-                  <label for="intelligenceSourceConfig">检索来源</label>
-                  <select class="settings-native-sync" id="intelligenceSourceConfig" aria-hidden="true" tabindex="-1">
-                    <option value="all">Bing + 微信</option>
-                    <option value="bing">仅 Bing 新闻</option>
-                    <option value="wechat">仅微信公众号</option>
-                  </select>
-                  <div class="geist-segment" data-segment-for="intelligenceSourceConfig" role="group" aria-label="检索来源">
-                    <button class="active" type="button" data-segment-value="all">Bing + 微信</button>
-                    <button type="button" data-segment-value="bing">Bing</button>
-                    <button type="button" data-segment-value="wechat">微信公众号</button>
+              </section>
+              <section class="intelligence-config-block">
+                <div class="settings-fieldset-title">
+                  <h3>检索范围</h3>
+                  <p>分别配置情报频道和内容来源。</p>
+                </div>
+                <div class="intelligence-segment-grid">
+                  <div class="intelligence-subgroup">
+                    <div class="field">
+                      <label for="intelligenceChannelConfig">更新渠道</label>
+                      <select class="settings-native-sync" id="intelligenceChannelConfig" aria-hidden="true" tabindex="-1">
+                        <option value="all">全部</option>
+                        <option value="ai_hr">AI × HR</option>
+                        <option value="game_org">游戏组织</option>
+                      </select>
+                      <div class="geist-segment" data-segment-for="intelligenceChannelConfig" role="group" aria-label="更新渠道">
+                        <button class="active" type="button" data-segment-value="all">全部</button>
+                        <button type="button" data-segment-value="ai_hr">AI × HR</button>
+                        <button type="button" data-segment-value="game_org">游戏组织</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="intelligence-subgroup">
+                    <div class="field">
+                      <label for="intelligenceSourceConfig">检索来源</label>
+                      <select class="settings-native-sync" id="intelligenceSourceConfig" aria-hidden="true" tabindex="-1">
+                        <option value="all">Bing + 微信</option>
+                        <option value="bing">仅 Bing 新闻</option>
+                        <option value="wechat">仅微信公众号</option>
+                      </select>
+                      <div class="geist-segment" data-segment-for="intelligenceSourceConfig" role="group" aria-label="检索来源">
+                        <button class="active" type="button" data-segment-value="all">Bing + 微信</button>
+                        <button type="button" data-segment-value="bing">Bing</button>
+                        <button type="button" data-segment-value="wechat">微信公众号</button>
+                      </div>
+                    </div>
+                    <label class="checkbox-field intelligence-inline-toggle">
+                      <input id="intelligenceAllowUnverifiedWechat" type="checkbox">
+                      <span>保留未核验微信线索</span>
+                    </label>
                   </div>
                 </div>
-              </div>
-              <label class="checkbox-field intelligence-inline-toggle">
-                <input id="intelligenceAllowUnverifiedWechat" type="checkbox">
-                <span>保留未核验微信线索</span>
-              </label>
-              <div class="form-actions">
+              </section>
+              <section class="intelligence-config-block intelligence-config-actions">
+                <div class="settings-fieldset-title">
+                  <h3>保存与状态</h3>
+                  <p>保存当前配置，状态信息会在下方弱提示。</p>
+                </div>
+                <div class="form-actions">
                 <button type="submit">保存情报配置</button>
                 <span class="status-line" id="intelligenceConfigStatus"></span>
-              </div>
+                </div>
+              </section>
               </form>
             </details>
             <details class="settings-section" data-settings-panel="update">
@@ -1033,7 +1098,6 @@
                 <div><span>进程 ID</span><strong id="serverStatusPid">-</strong></div>
                 <div><span>启动时间</span><strong id="serverStatusStartedAt">-</strong></div>
               </div>
-              <div class="status-line" id="serverStatusMessage">正在检查服务连接。</div>
             </section>
             </div>
           </section>
@@ -1043,7 +1107,7 @@
   </div>
 
   <script src="static/modules/talent-review/talent-review.js?v=20260703-remove-builtin-report"></script>
-  <script src="static/js/app.js?v=20260703-remove-builtin-report"></script>
+  <script src="static/js/app.js?v=20260706-report-generate-refine"></script>
   <script src="static/modules/reports/report-inline-calibrator.js?v=20260701-data-source-summary"></script>
   <script src="static/modules/reports/report-detail-tables.js?v=20260701-data-source-summary"></script>
 

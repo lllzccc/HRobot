@@ -93,4 +93,23 @@ powershell -ExecutionPolicy Bypass -File scripts\package_mac_source.ps1 -Version
 }
 ```
 
+## macOS desktop packages
+
+macOS desktop apps must be built on macOS. GitHub Actions uses Apple Silicon and Intel runners to create both DMG variants:
+
+```bash
+bash scripts/package_macos.sh 0.1.3 arm64 release-dist
+bash scripts/package_macos.sh 0.1.3 x64 release-dist
+```
+
+Artifacts are named `hrobot-mac-arm64-<version>.dmg` and `hrobot-mac-x64-<version>.dmg`. Runtime user data lives in `~/Library/Application Support/Hrobot`; a packaged app must not depend on writable data inside the `.app` bundle.
+
+Desktop packages use an explicit `assets/brand/` allowlist:
+
+- `hrobot-buddy-avatar.svg`
+- `hrobot-logo-dark.png`
+- `hrobot-report-watermark.png`
+
+Never package the complete local `assets/brand/` folder.
+
 更新源应指向包含 `release.json` 的同步目录，或直接指向可读取 JSON 的文件/URL。网页分享页通常不能作为自动更新直链。

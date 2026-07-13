@@ -64,6 +64,11 @@ server-debug*.log
 # Brand-specific local assets and generated design notes
 # 公开仓库建议不要上传公司 VI、旧品牌素材或历史设计提示词。
 assets/brand/
+!assets/brand/
+assets/brand/*
+!assets/brand/hrobot-buddy-avatar.svg
+!assets/brand/hrobot-logo-dark.png
+!assets/brand/hrobot-report-watermark.png
 docs/brand-vi.md
 docs/superpowers/
 
@@ -81,3 +86,7 @@ data/*
 # 如果确认模板不含真实员工/公司信息，可删除下面两行的注释并提交模板。
 # !data/templates/
 # !data/templates/**
+
+# Generated avatar display cache
+assets/avatars/_trimmed/
+output/
